@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential meson ninja-build pkg-config \
+            libgtk-4-dev libglib2.0-dev libgraphene-1.0-dev
+
+      - name: Configure
+        run: meson setup build
+
+      - name: Compile
+        run: meson compile -C build
+
+      - name: Integrity check
+        run: ./scripts/verify-sources.sh
+
+      - name: Build addon
+        run: cd addons/blur_tool && make && cd ../..
+
+      - name: Smoke test (headless)
+        run: |
+          sudo apt-get install -y xvfb
+          cd build && xvfb-run -a timeout 3 ./src/paint-c || [ $? -eq 124 ]

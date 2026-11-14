@@ -1,0 +1,38 @@
+# Build outputs
+build/
+build-*/
+*.o
+*.a
+*.so
+*.dll
+*.exe
+
+# Addon compiled binaries — sources are tracked, artifacts are not
+addons/*/*.so
+addons/*/*.dll
+addons/*/build/
+
+# Backups from the upgrade scripts
+backup_*/
+*.bak
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+.cache/
+.direnv/
+
+# Local logs
+*.log
+/tmp/
+
+# Meson-generated
+compile_commands.json
+meson-logs/
+meson-info/
+
+# OS noise
+.DS_Store
+Thumbs.db
