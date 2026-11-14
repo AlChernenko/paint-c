@@ -55,7 +55,7 @@ file_io_open_png (const char *path, GError **error)
     }
 
     g_object_unref (pb);
-    document_recomposite_all (doc);
+    document_invalidate (doc);
     document_mark_clean (doc);
     return doc;
 }

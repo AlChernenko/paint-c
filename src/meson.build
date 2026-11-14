@@ -7,6 +7,7 @@ sources = files(
   'domain/layer.c',
   'domain/compositor.c',
   'domain/document.c',
+  'domain/history.c',
   'platform/canvas.c',
   'platform/clipboard.c',
   'platform/checkerboard.c',
@@ -19,6 +20,8 @@ sources = files(
   'interaction/tools/blur.c',
   'platform/clipboard.c',
   'interaction/tools/select_rect.c',
+  'interaction/tools/line.c',
+  'interaction/tools/move.c',
   'shell/swatch.c',
   'shell/window.c',
 )

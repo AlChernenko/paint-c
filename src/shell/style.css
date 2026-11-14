@@ -1,53 +1,21 @@
-/* Paint C — application stylesheet */
+/* Paint C — Compact stylesheet */
 
 /* ── Canvas workspace ──────────────────────────────────────────────── */
 .canvas-scroll,
 .canvas-scroll > viewport {
-    background-color: #3a3a3a;
+    background-color: #2e2e2e;
 }
 
 .paint-canvas {
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
     border: 1px solid #101010;
 }
 
-/* ── Toolbar: uniform small buttons, no text-squeeze ───────────────── */
-.toolbar {
-    background-color: alpha(currentColor, 0.04);
-    border-bottom: 1px solid alpha(currentColor, 0.1);
-    padding: 3px 6px;
-    min-height: 34px;
-}
-
-.toolbar button {
-    background-image: none;
-    min-height: 28px;
-    min-width: 28px;
-    padding: 3px;
-    border-radius: 4px;
-}
-
-.toolbar button:hover {
-    background-color: alpha(currentColor, 0.1);
-}
-
-.toolbar button:active {
-    background-color: alpha(currentColor, 0.2);
-}
-
-/* ── Tool options bar ──────────────────────────────────────────────── */
-.tool-options {
-    background-color: alpha(currentColor, 0.02);
-    border-bottom: 1px solid alpha(currentColor, 0.08);
-    padding: 4px 8px;
-    min-height: 36px;
-}
-
-/* ── Left / right dock cards ───────────────────────────────────────── */
+/* ── Docks ─────────────────────────────────────────────────────────── */
 .dock {
     background-color: alpha(currentColor, 0.03);
     border-right: 1px solid alpha(currentColor, 0.1);
-    padding: 4px;
+    padding: 2px;
 }
 
 .dock-right {
@@ -58,72 +26,77 @@
 .panel-card {
     background-color: alpha(currentColor, 0.04);
     border: 1px solid alpha(currentColor, 0.12);
-    border-radius: 6px;
-    margin: 4px 2px;
+    border-radius: 4px;
+    margin: 2px;
 }
 
 .panel-header {
     font-weight: bold;
-    font-size: 90%;
-    padding: 5px 8px;
+    font-size: 85%;
+    padding: 2px 6px;
     border-bottom: 1px solid alpha(currentColor, 0.1);
 }
 
 .panel-body {
-    padding: 6px;
-}
-
-/* ── Tool grid (2 columns) ─────────────────────────────────────────── */
-.tool-grid {
     padding: 4px;
 }
 
-.tool-grid button {
-    min-width: 32px;
-    min-height: 32px;
-    padding: 2px;
-    border-radius: 5px;
+/* ── Toolbar ───────────────────────────────────────────────────────── */
+.toolbar {
+    background-color: alpha(currentColor, 0.04);
+    border-bottom: 1px solid alpha(currentColor, 0.1);
+    padding: 2px 4px;
+    min-height: 28px;
+}
+
+.toolbar button {
     background-image: none;
-    font-size: 110%;
+    min-height: 24px;
+    min-width: 24px;
+    padding: 2px;
+    border-radius: 3px;
+}
+
+/* ── Tool Grid ─────────────────────────────────────────────────────── */
+.tool-grid {
+    padding: 2px;
+}
+
+.tool-grid button {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 1px;
+    border-radius: 4px;
+    background-image: none;
+    font-size: 100%;
 }
 
 .tool-grid button:checked {
     background-color: alpha(@accent_bg_color, 0.35);
     border: 1px solid @accent_bg_color;
-    box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.6);
 }
 
 .tool-grid button:hover:not(:checked) {
     background-color: alpha(currentColor, 0.12);
 }
 
-/* ── Color swatches (drawn, not styled) ────────────────────────────── */
-.swatch-grid {
-    padding: 2px;
-}
-
-/* ── Layer row ─────────────────────────────────────────────────────── */
-.layer-thumb {
-    border: 1px solid alpha(currentColor, 0.25);
-    border-radius: 2px;
-}
-
+/* ── Card Action Bar ───────────────────────────────────────────────── */
 .card-action-bar {
-    padding: 4px;
+    padding: 2px;
     border-top: 1px solid alpha(currentColor, 0.08);
 }
 
 .card-action-bar button {
-    min-width: 28px;
-    min-height: 28px;
-    padding: 2px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 1px;
 }
 
 /* ── Status bar ────────────────────────────────────────────────────── */
 .status-bar {
     background-color: alpha(currentColor, 0.05);
     border-top: 1px solid alpha(currentColor, 0.12);
-    padding: 3px 10px;
-    font-size: 92%;
-    min-height: 24px;
+    padding: 2px 6px;
+    font-size: 90%;
+    min-height: 20px;
 }

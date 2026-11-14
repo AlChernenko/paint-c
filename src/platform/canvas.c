@@ -130,6 +130,15 @@ paint_canvas_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
             t = GRAPHENE_RECT_INIT (x + 1, y + 1, 1, h - 2);         gtk_snapshot_append_color (snapshot, &black, &t);
             t = GRAPHENE_RECT_INIT (x + w - 2, y + 1, 1, h - 2);     gtk_snapshot_append_color (snapshot, &black, &t);
         }
+        /* Draw 8 handles */
+        double hx[] = { x, x + w/2, x + w, x + w, x + w, x + w/2, x, x };
+        double hy[] = { y, y, y, y + h/2, y + h, y + h, y + h, y + h/2 };
+        for (int i = 0; i < 8; i++) {
+            graphene_rect_t h_outer = GRAPHENE_RECT_INIT (hx[i] - 4, hy[i] - 4, 8, 8);
+            graphene_rect_t h_inner = GRAPHENE_RECT_INIT (hx[i] - 2.5, hy[i] - 2.5, 5, 5);
+            gtk_snapshot_append_color (snapshot, &white, &h_outer);
+            gtk_snapshot_append_color (snapshot, &black, &h_inner);
+        }
     }
 
     if (self->cursor_visible) {

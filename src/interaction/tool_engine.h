@@ -20,7 +20,8 @@
  * The engine does NOT free the old tool — ownership stays with the caller
  * (usually the window). For M2 the window owns a single pencil tool for
  * the app's whole lifetime. */
-void tool_engine_set_active (Tool *tool);
+void tool_engine_set_active (Tool *tool, Document *doc);
+Tool *tool_engine_get_active (void);
 
 Tool *tool_engine_get_active (void);
 
