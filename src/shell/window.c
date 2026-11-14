@@ -47,12 +47,11 @@ struct _PaintWindow {
     GtkWidget *panel_tools, *panel_colors, *panel_history, *panel_layers;
     GtkWidget *history_list;
     GtkWidget *tool_options_box;
-    bool panel_tools_visible, panel_colors_visible, panel_history_visible, panel_layers_visible;
 };
 
 G_DEFINE_FINAL_TYPE (PaintWindow, paint_window, GTK_TYPE_APPLICATION_WINDOW)
 
-/* Forward Declarations */
+/* ── Forward Declarations ───────────────────────────────────────────── */
 static void update_title (PaintWindow *self);
 static void update_status_bar (PaintWindow *self);
 static void update_history_panel (PaintWindow *self);
@@ -111,9 +110,9 @@ static void on_btn_about (GtkButton *b, gpointer ud);
 static void config_load_window_state (PaintWindow *self);
 static void config_save_window_state (PaintWindow *self);
 static void commit_active_tool (PaintWindow *self);
-static gboolean on_key_pressed (GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer ud);
+static void create_tool_toggles (PaintWindow *self);
 
-/* Utility / Config */
+/* ── Helpers ────────────────────────────────────────────────────────── */
 static void update_title (PaintWindow *self) {
     if (!self->document) return;
     const char *raw = self->current_path ? self->current_path : "Untitled";
@@ -121,6 +120,11 @@ static void update_title (PaintWindow *self) {
     char *title = document_is_dirty(self->document) ? g_strdup_printf("Paint C — *%s", base) : g_strdup_printf("Paint C — %s", base);
     gtk_window_set_title(GTK_WINDOW(self), title);
     g_free(title); g_free(base);
+}
+
+static void commit_active_tool (PaintWindow *self) {
+    Tool *t = tool_engine_get_active();
+    if (t && t->vtable->deactivate) t->vtable->deactivate(t, self->document);
 }
 
 static void config_load_window_state (PaintWindow *self) {
@@ -132,6 +136,7 @@ static void config_load_window_state (PaintWindow *self) {
     Pixel c = { config_get_int("color/b", 0), config_get_int("color/g", 0), config_get_int("color/r", 0), 255 };
     pencil_tool_set_color(self->pencil, c);
 }
+
 static void config_save_window_state (PaintWindow *self) {
     if (!self) return;
     int w = gtk_widget_get_width(GTK_WIDGET(self)), h = gtk_widget_get_height(GTK_WIDGET(self));
@@ -149,9 +154,15 @@ static void config_save_window_state (PaintWindow *self) {
     }
     config_save();
 }
+
 static gboolean on_close_request (GtkWindow *win, gpointer ud) { (void)win; config_save_window_state(PAINT_WINDOW(ud)); return FALSE; }
 
-/* Observers */
+static void on_window_map (GtkWidget *widget, gpointer ud) {
+    (void)widget; PaintWindow *self = PAINT_WINDOW(ud);
+    if (self->canvas) gtk_widget_grab_focus(self->canvas);
+}
+
+/* ── Observers ──────────────────────────────────────────────────────── */
 static void on_doc_composite_changed (void *ud) { PaintWindow *s = PAINT_WINDOW(ud); update_title(s); update_status_bar(s); }
 static void on_doc_layer_list_changed (void *ud) { PaintWindow *s = PAINT_WINDOW(ud); rebuild_layer_panel(s); update_title(s); update_status_bar(s); }
 static void on_doc_active_layer_changed (void *ud) {
@@ -180,7 +191,7 @@ static void paint_window_set_document (PaintWindow *self, Document *doc, const c
     update_history_panel(self);
 }
 
-/* File Actions */
+/* ── File Actions ───────────────────────────────────────────────────── */
 static void show_error (PaintWindow *self, const char *title, const char *msg) {
     GtkAlertDialog *d = gtk_alert_dialog_new("%s", title); gtk_alert_dialog_set_detail(d, msg); gtk_alert_dialog_show(d, GTK_WINDOW(self));
 }
@@ -252,78 +263,76 @@ static void action_open (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; 
 static void action_save (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->current_path) do_save_to_path(s, s->current_path); else do_save_as_dialog(s); }
 static void action_save_as (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; do_save_as_dialog(PAINT_WINDOW(ud)); }
 
-/* Edit / Clipboard Actions */
+/* ── Edit / Clipboard Actions ───────────────────────────────────────── */
 static void action_copy (GSimpleAction *a, GVariant *p, gpointer ud) {
     (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
     if (!self->document) return;
     PixelBuffer *buf = document_copy_region(self->document);
-    if (buf) {
-        clipboard_set(buf); clipboard_set_system(buf); pixel_buffer_free(buf);
-        LOG_INFO("Copied region to clipboard");
-    }
+    if (buf) { clipboard_set(buf); clipboard_set_system(buf); pixel_buffer_free(buf); }
 }
 static void action_cut (GSimpleAction *a, GVariant *p, gpointer ud) {
     (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
     if (!self->document) return;
     PixelBuffer *buf = document_copy_region(self->document);
-    if (buf) {
-        clipboard_set(buf); clipboard_set_system(buf); pixel_buffer_free(buf);
-        document_clear_region(self->document); LOG_INFO("Cut region to clipboard");
-    }
+    if (buf) { clipboard_set(buf); clipboard_set_system(buf); pixel_buffer_free(buf); document_clear_region(self->document); }
 }
 typedef struct { PaintWindow *win; } PasteCtx;
 static void on_system_paste (PixelBuffer *buf, void *ud) {
     PasteCtx *ctx = ud;
     if (buf && ctx->win->document) {
         SelectionRect r = document_selection(ctx->win->document);
-        int paste_x = r.w > 0 ? r.x : 0;
-        int paste_y = r.h > 0 ? r.y : 0;
-        document_paste_buffer(ctx->win->document, buf, paste_x, paste_y);
-        document_set_selection(ctx->win->document, paste_x, paste_y, buf->width, buf->height);
+        int px = r.w > 0 ? r.x : 0; int py = r.h > 0 ? r.y : 0;
+        document_paste_buffer(ctx->win->document, buf, px, py);
+        document_set_selection(ctx->win->document, px, py, buf->width, buf->height);
     }
     g_free(ctx);
 }
 static void action_paste (GSimpleAction *a, GVariant *p, gpointer ud) {
     (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
     if (!self->document) return;
-    
-    PixelBuffer *buf = clipboard_get_internal();
-    if (buf) {
-        SelectionRect r = document_selection(self->document);
-        int paste_x = r.w > 0 ? r.x : 0;
-        int paste_y = r.h > 0 ? r.y : 0;
-        
-        document_paste_buffer(self->document, buf, paste_x, paste_y);
-        
-        /* If the pasted buffer is larger than the selection, expand the selection to fit */
-        if (buf->width > r.w || buf->height > r.h) {
-            document_set_selection(self->document, paste_x, paste_y, buf->width, buf->height);
+    if (clipboard_has_internal()) {
+        PixelBuffer *buf = clipboard_get_internal();
+        if (buf) {
+            SelectionRect r = document_selection(self->document);
+            int px = r.w > 0 ? r.x : 0; int py = r.h > 0 ? r.y : 0;
+            document_paste_buffer(self->document, buf, px, py);
+            document_set_selection(self->document, px, py, buf->width, buf->height);
+            pixel_buffer_free(buf); return;
         }
-        
-        pixel_buffer_free(buf);
-        LOG_INFO("Pasted from internal clipboard");
-        return;
     }
-    
-    PasteCtx *ctx = g_new0(PasteCtx, 1); 
-    ctx->win = self; 
-    clipboard_get_system_async(on_system_paste, ctx);
+    PasteCtx *ctx = g_new0(PasteCtx, 1); ctx->win = self; clipboard_get_system_async(on_system_paste, ctx);
 }
 static void action_undo (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->document) document_undo(s->document); }
 static void action_redo (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->document) document_redo(s->document); }
 
-/* Layer Actions */
+static void action_select_all (GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud); if (!self->document) return;
+    commit_active_tool(self);
+    document_set_selection(self->document, 0, 0, document_width(self->document), document_height(self->document));
+}
+static void action_deselect (GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud); if (!self->document) return;
+    commit_active_tool(self);
+    document_clear_selection(self->document);
+}
+static void action_delete_sel (GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud); if (!self->document) return;
+    commit_active_tool(self);
+    document_clear_region(self->document);
+}
+
+/* ── Layer Actions (with commit) ────────────────────────────────────── */
 static void action_layer_add (GSimpleAction *a, GVariant *p, gpointer ud) {
-    (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); char *n = g_strdup_printf("Layer %d", document_layer_count(s->document) + 1);
+    (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); char *n = g_strdup_printf("Layer %d", document_layer_count(s->document) + 1);
     document_add_layer(s->document, n); g_free(n);
 }
-static void action_layer_delete (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); document_remove_layer(s->document, document_active_layer(s->document)); }
-static void action_layer_up (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); int i = document_active_layer(s->document); document_move_layer(s->document, i, i + 1); }
-static void action_layer_down (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); int i = document_active_layer(s->document); document_move_layer(s->document, i, i - 1); }
-static void action_layer_merge (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); document_merge_down(s->document, document_active_layer(s->document)); }
-static void action_layer_duplicate (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); document_duplicate_layer(s->document, document_active_layer(s->document)); }
+static void action_layer_delete (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); document_remove_layer(s->document, document_active_layer(s->document)); }
+static void action_layer_up (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); int i = document_active_layer(s->document); document_move_layer(s->document, i, i + 1); }
+static void action_layer_down (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); int i = document_active_layer(s->document); document_move_layer(s->document, i, i - 1); }
+static void action_layer_merge (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); document_merge_down(s->document, document_active_layer(s->document)); }
+static void action_layer_duplicate (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); commit_active_tool(s); document_duplicate_layer(s->document, document_active_layer(s->document)); }
 
-/* Toggles & Preferences */
+/* ── Toggles & Preferences ──────────────────────────────────────────── */
 static void action_toggle_tools (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->panel_tools) gtk_widget_set_visible(s->panel_tools, !gtk_widget_get_visible(s->panel_tools)); }
 static void action_toggle_colors (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->panel_colors) gtk_widget_set_visible(s->panel_colors, !gtk_widget_get_visible(s->panel_colors)); }
 static void action_toggle_history (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->panel_history) gtk_widget_set_visible(s->panel_history, !gtk_widget_get_visible(s->panel_history)); }
@@ -343,7 +352,7 @@ static void action_zoom_fit (GSimpleAction *a, GVariant *p, gpointer ud) {
 }
 static void action_zoom_100 (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->canvas) paint_canvas_set_zoom(PAINT_CANVAS(s->canvas), 1.0); }
 
-/* Tool Actions */
+/* ── Tool Actions ───────────────────────────────────────────────────── */
 static void action_tool_pencil (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->tb_pencil) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->tb_pencil), TRUE); }
 static void action_tool_eraser (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->tb_eraser) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->tb_eraser), TRUE); }
 static void action_tool_eyedropper (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->tb_eyedropper) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->tb_eyedropper), TRUE); }
@@ -352,34 +361,12 @@ static void action_tool_select (GSimpleAction *a, GVariant *p, gpointer ud) { (v
 static void action_tool_line (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->tb_line) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->tb_line), TRUE); }
 static void action_tool_move (GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; PaintWindow *s = PAINT_WINDOW(ud); if (s->tb_move) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->tb_move), TRUE); }
 
-
-static void action_select_all (GSimpleAction *a, GVariant *p, gpointer ud) {
-    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
-    if (!self->document) return;
-    commit_active_tool(self);
-    document_set_selection(self->document, 0, 0, document_width(self->document), document_height(self->document));
-}
-static void action_deselect (GSimpleAction *a, GVariant *p, gpointer ud) {
-    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
-    if (!self->document) return;
-    commit_active_tool(self);
-    document_clear_selection(self->document);
-}
-static void action_delete_sel (GSimpleAction *a, GVariant *p, gpointer ud) {
-    (void)a; (void)p; PaintWindow *self = PAINT_WINDOW(ud);
-    if (!self->document) return;
-    commit_active_tool(self);
-    document_clear_region(self->document);
-}
-
 static const GActionEntry win_actions[] = {
     { "new", action_new, NULL, NULL, NULL, {0} }, { "open", action_open, NULL, NULL, NULL, {0} },
     { "save", action_save, NULL, NULL, NULL, {0} }, { "save-as", action_save_as, NULL, NULL, NULL, {0} },
     { "copy", action_copy, NULL, NULL, NULL, {0} }, { "cut", action_cut, NULL, NULL, NULL, {0} }, { "paste", action_paste, NULL, NULL, NULL, {0} },
-    { "select-all", action_select_all, NULL, NULL, NULL, {0} },
-    { "deselect", action_deselect, NULL, NULL, NULL, {0} },
-    { "delete-sel", action_delete_sel, NULL, NULL, NULL, {0} },
     { "undo", action_undo, NULL, NULL, NULL, {0} }, { "redo", action_redo, NULL, NULL, NULL, {0} },
+    { "select-all", action_select_all, NULL, NULL, NULL, {0} }, { "deselect", action_deselect, NULL, NULL, NULL, {0} }, { "delete-sel", action_delete_sel, NULL, NULL, NULL, {0} },
     { "layer-add", action_layer_add, NULL, NULL, NULL, {0} }, { "layer-delete", action_layer_delete, NULL, NULL, NULL, {0} },
     { "layer-up", action_layer_up, NULL, NULL, NULL, {0} }, { "layer-down", action_layer_down, NULL, NULL, NULL, {0} },
     { "layer-merge-down", action_layer_merge, NULL, NULL, NULL, {0} }, { "layer-duplicate", action_layer_duplicate, NULL, NULL, NULL, {0} },
@@ -394,7 +381,7 @@ static const GActionEntry win_actions[] = {
     { "preferences", action_preferences, NULL, NULL, NULL, {0} }, { "about", action_about, NULL, NULL, NULL, {0} },
 };
 
-/* UI Callbacks */
+/* ── UI Callbacks ───────────────────────────────────────────────────── */
 static void on_cursor_moved (PaintCanvas *canvas, double x, double y, gpointer ud) {
     (void)canvas; PaintWindow *self = PAINT_WINDOW(ud);
     if (self->st_cursor) { char buf[64]; snprintf(buf, sizeof buf, "%.0f, %.0f", x, y); gtk_label_set_text(GTK_LABEL(self->st_cursor), buf); }
@@ -453,17 +440,14 @@ static void on_tool_toggled (GtkToggleButton *btn, gpointer ud) {
     tool_options_refresh(self); update_status_bar(self); update_cursor_radius(self);
 }
 static void update_cursor_radius (PaintWindow *self) {
-    if (!self->canvas) return; Tool *t = tool_engine_get_active(); double r = 0;
+    if (!self->canvas) return;
+    Tool *t = tool_engine_get_active(); double r = 0;
     if (t == self->pencil) r = pencil_tool_get_radius(t); else if (t == self->eraser) r = eraser_tool_get_radius(t); else if (t == self->blur) r = blur_tool_get_radius(t);
     paint_canvas_set_cursor_radius(PAINT_CANVAS(self->canvas), r);
 }
-static void __attribute__((unused)) commit_active_tool (PaintWindow *self) {
-    Tool *t = tool_engine_get_active();
-    if (t && t->vtable->deactivate) t->vtable->deactivate(t, self->document);
-}
-
 static void update_status_bar (PaintWindow *self) {
-    if (!self->document) return; char buf[128];
+    if (!self->document) return;
+    char buf[128];
     snprintf(buf, sizeof buf, "%d × %d", document_width(self->document), document_height(self->document));
     if (self->st_dim) gtk_label_set_text(GTK_LABEL(self->st_dim), buf);
     Tool *t = tool_engine_get_active();
@@ -483,7 +467,7 @@ static GtkWidget *make_card (const char *title, GtkWidget *body, GtkWidget *acti
     return box;
 }
 
-/* Panels */
+/* ── Panels ─────────────────────────────────────────────────────────── */
 static void update_history_panel (PaintWindow *self) {
     if (!self->history_list || !self->document) return;
     GtkWidget *child; while ((child = gtk_widget_get_first_child(self->history_list))) gtk_list_box_remove(GTK_LIST_BOX(self->history_list), child);
@@ -499,23 +483,14 @@ static void update_history_panel (PaintWindow *self) {
 }
 static GtkWidget *build_history_panel (PaintWindow *self) {
     GtkWidget *list = gtk_list_box_new(); gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE); self->history_list = list;
-    
-    GtkWidget *scroll = gtk_scrolled_window_new(); 
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
-    
-    /* Force a fixed height so it scrolls instead of expanding */
-    gtk_widget_set_size_request(scroll, -1, 300);
-    gtk_widget_set_vexpand(scroll, FALSE); 
-    gtk_widget_set_valign(scroll, GTK_ALIGN_START);
+    GtkWidget *scroll = gtk_scrolled_window_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
+    gtk_widget_set_size_request(scroll, -1, 250); gtk_widget_set_vexpand(scroll, FALSE); gtk_widget_set_valign(scroll, GTK_ALIGN_START);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-
     GtkWidget *action = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
     GtkWidget *u = gtk_button_new_from_icon_name("edit-undo-symbolic"), *d = gtk_button_new_from_icon_name("edit-redo-symbolic");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(u), "win.undo"); gtk_actionable_set_action_name(GTK_ACTIONABLE(d), "win.redo");
     gtk_box_append(GTK_BOX(action), u); gtk_box_append(GTK_BOX(action), d);
-    GtkWidget *card = make_card("<b>History</b>", scroll, action);
-    gtk_widget_set_vexpand(card, FALSE);
-    return card;
+    GtkWidget *card = make_card("<b>History</b>", scroll, action); gtk_widget_set_vexpand(card, FALSE); return card;
 }
 static GtkWidget *build_tool_palette (PaintWindow *self) {
     GtkWidget *grid = gtk_grid_new(); gtk_widget_add_css_class(grid, "tool-grid");
@@ -594,16 +569,19 @@ static void rebuild_layer_panel (PaintWindow *self) {
     self->updating_ui = FALSE; update_layer_actions(self); sync_opacity_scale(self);
 }
 static void update_layer_actions (PaintWindow *self) {
-    if (!self->document) return; int n = document_layer_count(self->document), a = document_active_layer(self->document);
+    if (!self->document) return;
+    int n = document_layer_count(self->document), a = document_active_layer(self->document);
     g_simple_action_set_enabled(self->act_layer_delete, n > 1); g_simple_action_set_enabled(self->act_layer_up, a >= 0 && a < n - 1);
     g_simple_action_set_enabled(self->act_layer_down, a > 0); g_simple_action_set_enabled(self->act_layer_merge, a > 0);
 }
 static void sync_opacity_scale (PaintWindow *self) {
-    if (!self->opacity_scale || !self->document) return; int a = document_active_layer(self->document); Layer *l = document_layer_at(self->document, a);
+    if (!self->opacity_scale || !self->document) return;
+    int a = document_active_layer(self->document); Layer *l = document_layer_at(self->document, a);
     self->updating_ui = TRUE; gtk_range_set_value(GTK_RANGE(self->opacity_scale), l ? l->opacity * 100.0 : 100.0); gtk_widget_set_sensitive(self->opacity_scale, l != NULL); self->updating_ui = FALSE;
 }
 static void tool_options_refresh (PaintWindow *self) {
-    if (!self->tool_options_box) return; GtkWidget *child; while ((child = gtk_widget_get_first_child(self->tool_options_box))) gtk_box_remove(GTK_BOX(self->tool_options_box), child);
+    if (!self->tool_options_box) return;
+    GtkWidget *child; while ((child = gtk_widget_get_first_child(self->tool_options_box))) gtk_box_remove(GTK_BOX(self->tool_options_box), child);
     Tool *t = tool_engine_get_active(); const char *name = t ? t->vtable->name : "None";
     GtkWidget *lbl = gtk_label_new(NULL); char *markup = g_markup_printf_escaped("<b>%s</b>", name); gtk_label_set_markup(GTK_LABEL(lbl), markup); g_free(markup);
     gtk_box_append(GTK_BOX(self->tool_options_box), lbl);
@@ -642,7 +620,7 @@ static GtkWidget *build_layer_panel (PaintWindow *self) {
 static GtkWidget *build_menubar (PaintWindow *self) {
     (void)self; GMenu *file = g_menu_new(); g_menu_append(file, "New…", "win.new"); g_menu_append(file, "Open…", "win.open"); g_menu_append(file, "Save", "win.save"); g_menu_append(file, "Save As…", "win.save-as"); g_menu_append(file, "Quit", "app.quit");
     GMenu *edit = g_menu_new(); g_menu_append(edit, "Undo", "win.undo"); g_menu_append(edit, "Redo", "win.redo"); g_menu_append(edit, "Cut", "win.cut"); g_menu_append(edit, "Copy", "win.copy"); g_menu_append(edit, "Paste", "win.paste"); g_menu_append(edit, "Select All", "win.select-all"); g_menu_append(edit, "Deselect", "win.deselect"); g_menu_append(edit, "Delete Selection", "win.delete-sel"); g_menu_append(edit, "Preferences…", "win.preferences");
-    GMenu *tools = g_menu_new(); g_menu_append(tools, "Pencil", "win.tool-pencil"); g_menu_append(tools, "Eraser", "win.tool-eraser"); g_menu_append(tools, "Eyedropper", "win.tool-eyedropper"); g_menu_append(tools, "Blur", "win.tool-blur"); g_menu_append(tools, "Select Rectangle", "win.tool-select"); g_menu_append(tools, "Line", "win.tool-line"); g_menu_append(tools, "Move Pixels", "win.tool-move");
+    GMenu *tools = g_menu_new(); g_menu_append(tools, "Pencil", "win.tool-pencil"); g_menu_append(tools, "Eraser", "win.tool-eraser"); g_menu_append(tools, "Eyedropper", "win.tool-eyedropper"); g_menu_append(tools, "Blur", "win.tool-blur"); g_menu_append(tools, "Select Rectangle", "win.tool-select"); g_menu_append(tools, "Line", "win.tool-line"); g_menu_append(tools, "Transform", "win.tool-move");
     GMenu *layer = g_menu_new(); g_menu_append(layer, "New Layer", "win.layer-add"); g_menu_append(layer, "Duplicate Layer", "win.layer-duplicate"); g_menu_append(layer, "Delete Layer", "win.layer-delete"); g_menu_append(layer, "Move Up", "win.layer-up"); g_menu_append(layer, "Move Down", "win.layer-down"); g_menu_append(layer, "Merge Down", "win.layer-merge-down");
     GMenu *view = g_menu_new(); g_menu_append(view, "Zoom In", "win.zoom-in"); g_menu_append(view, "Zoom Out", "win.zoom-out"); g_menu_append(view, "Fit to Window", "win.zoom-fit"); g_menu_append(view, "Actual Size (100%)", "win.zoom-100");
     GMenu *panels = g_menu_new(); g_menu_append(panels, "Tools Panel", "win.toggle-tools"); g_menu_append(panels, "Colors Panel", "win.toggle-colors"); g_menu_append(panels, "History Panel", "win.toggle-history"); g_menu_append(panels, "Layers Panel", "win.toggle-layers"); g_menu_append_section(view, NULL, G_MENU_MODEL(panels));
@@ -666,14 +644,13 @@ static void create_tool_toggles (PaintWindow *self) {
 
 static void paint_window_init (PaintWindow *self) {
     gtk_window_set_default_size(GTK_WINDOW(self), 1300, 820);
-    GtkEventController *key_ctrl = gtk_event_controller_key_new();
-    gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
-    g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(on_key_pressed), self);
-    gtk_widget_add_controller(GTK_WIDGET(self), key_ctrl);
     g_signal_connect(self, "close-request", G_CALLBACK(on_close_request), self);
+    g_signal_connect(self, "map", G_CALLBACK(on_window_map), self);
+
     self->pencil = pencil_tool_new(); self->eraser = eraser_tool_new(); self->eyedropper = eyedropper_tool_new();
     self->blur = blur_tool_new(); self->select = select_rect_tool_new(); self->line = line_tool_new(); self->move = move_tool_new();
     eyedropper_tool_set_callback(self->eyedropper, on_eyedropper_picked, self);
+    
     self->plugin_tools = g_ptr_array_new_with_free_func(g_free);
     for (int i = 0; i < plugin_registry_count(); i++) { Tool *t = plugin_registry_create(i); if (t) g_ptr_array_add(self->plugin_tools, t); }
     tool_engine_set_active(self->pencil, self->document); config_load_window_state(self);
@@ -688,6 +665,7 @@ static void paint_window_init (PaintWindow *self) {
 
     create_tool_toggles(self);
     self->canvas = paint_canvas_new(); gtk_widget_add_css_class(self->canvas, "paint-canvas");
+    gtk_widget_set_focusable(self->canvas, TRUE); // Ensure focusable
     
     GtkWidget *center_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_halign(center_box, GTK_ALIGN_CENTER); gtk_widget_set_valign(center_box, GTK_ALIGN_CENTER);
@@ -744,19 +722,27 @@ static void paint_window_init (PaintWindow *self) {
     gtk_box_append(GTK_BOX(status), z_out); gtk_box_append(GTK_BOX(status), self->st_zoom); gtk_box_append(GTK_BOX(status), z_in); gtk_box_append(GTK_BOX(status), z_fit);
     gtk_box_append(GTK_BOX(root), status);
 
-    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
-    if (app) {
-        struct { const char *act; const char *accel; } map[] = {
-            { "win.new", "<Control>n" }, { "win.open", "<Control>o" }, { "win.save", "<Control>s" },
-            { "win.cut", "<Control>x" }, { "win.copy", "<Control>c" }, { "win.paste", "<Control>v" },
-            { "win.undo", "<Control>z" }, { "win.redo", "<Control><Shift>z" },
-            { "win.select-all", "<Control>a" }, { "win.deselect", "<Control>d" }, { "win.delete-sel", "Delete" },
-            { "win.zoom-in", "<Control>equal" }, { "win.zoom-out", "<Control>minus" },
-            { "win.tool-pencil", "p" }, { "win.tool-eraser", "e" }, { "win.tool-move", "m" },
-            { "win.tool-select", "s" }, { "win.tool-line", "l" }, { "win.tool-blur", "b" }, { "win.tool-eyedropper", "i" }
-        };
-        for (size_t i = 0; i < sizeof map / sizeof map[0]; i++) { const char *acc[] = { map[i].accel, NULL }; gtk_application_set_accels_for_action(app, map[i].act, acc); }
+    /* ── GtkShortcutController (The Bulletproof Shortcut System) ────── */
+    GtkShortcutController *shortcut_ctrl = (GtkShortcutController *)gtk_shortcut_controller_new();
+    gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), GTK_SHORTCUT_SCOPE_GLOBAL);
+    
+    const char *keys[][2] = {
+        {"<Control>n", "win.new"}, {"<Control>o", "win.open"}, {"<Control>s", "win.save"},
+        {"<Control>z", "win.undo"}, {"<Control><Shift>z", "win.redo"}, {"<Control>y", "win.redo"},
+        {"<Control>x", "win.cut"}, {"<Control>c", "win.copy"}, {"<Control>v", "win.paste"},
+        {"<Control>a", "win.select-all"}, {"<Control>d", "win.deselect"},
+        {"Escape", "win.deselect"}, {"Delete", "win.delete-sel"},
+        {"<Control>equal", "win.zoom-in"}, {"<Control>plus", "win.zoom-in"}, {"<Control>minus", "win.zoom-out"}, {"<Control>0", "win.zoom-fit"},
+        {"p", "win.tool-pencil"}, {"e", "win.tool-eraser"}, {"m", "win.tool-move"},
+        {"s", "win.tool-select"}, {"l", "win.tool-line"}, {"b", "win.tool-blur"}, {"i", "win.tool-eyedropper"}
+    };
+    
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
+        GtkShortcutTrigger *trigger = gtk_shortcut_trigger_parse_string(keys[i][0]);
+        GtkShortcutAction *action = gtk_named_action_new(keys[i][1]);
+        gtk_shortcut_controller_add_shortcut(shortcut_ctrl, gtk_shortcut_new(trigger, action));
     }
+    gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(shortcut_ctrl));
 
     Document *doc = document_new(512, 512); Layer *bg = document_add_layer(doc, "Background");
     pixel_buffer_fill_rect(bg->buffer, 0, 0, 512, 512, (Pixel){.b=255, .g=255, .r=255, .a=255});
@@ -773,37 +759,3 @@ static void paint_window_finalize (GObject *obj) {
 }
 static void paint_window_class_init (PaintWindowClass *klass) { G_OBJECT_CLASS(klass)->finalize = paint_window_finalize; }
 GtkWidget *paint_window_new (GtkApplication *app) { return g_object_new(PAINT_TYPE_WINDOW, "application", app, NULL); }
-
-
-static gboolean on_key_pressed (GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer ud) {
-    (void)ctrl; (void)keycode;
-    PaintWindow *self = PAINT_WINDOW(ud);
-    gboolean ctrl_pressed = (state & GDK_CONTROL_MASK) != 0;
-    gboolean shift_pressed = (state & GDK_SHIFT_MASK) != 0;
-    
-    if (ctrl_pressed) {
-        if (keyval == GDK_KEY_z) { if (shift_pressed) action_redo(NULL, NULL, self); else action_undo(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_x) { action_cut(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_c) { action_copy(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_v) { action_paste(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_a) { action_select_all(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_d) { action_deselect(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_n) { action_new(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_o) { action_open(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_s) { action_save(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_equal || keyval == GDK_KEY_plus) { action_zoom_in(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_minus) { action_zoom_out(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_0) { action_zoom_fit(NULL, NULL, self); return GDK_EVENT_STOP; }
-    } else {
-        if (keyval == GDK_KEY_p) { action_tool_pencil(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_e) { action_tool_eraser(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_m) { action_tool_move(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_s) { action_tool_select(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_l) { action_tool_line(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_b) { action_tool_blur(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_i) { action_tool_eyedropper(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_Delete) { action_delete_sel(NULL, NULL, self); return GDK_EVENT_STOP; }
-        if (keyval == GDK_KEY_Escape) { action_deselect(NULL, NULL, self); return GDK_EVENT_STOP; }
-    }
-    return GDK_EVENT_PROPAGATE;
-}

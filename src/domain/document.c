@@ -557,6 +557,8 @@ const char *document_history_label_at (const Document *d, int idx) {
 
 
 
+
+
 void document_clear_history (Document *doc) {
     command_stack_clear(&doc->stack);
     doc->dirty = false;
