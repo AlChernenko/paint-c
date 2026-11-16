@@ -20,8 +20,12 @@ eraser_stroke (Tool *tool, Document *doc, InputEvent *ev)
 
 static const ToolVTable eraser_vtable = {
     .id               = "eraser",
+    .group_id = "eraser",
     .name             = "Eraser",
+    .description = "Erase pixels to transparency.",
     .icon_name        = "paint-eraser-symbolic",
+    
+    
     .activate         = NULL,
     .deactivate       = NULL,
     .stroke_begin     = eraser_stroke,

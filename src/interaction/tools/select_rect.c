@@ -84,7 +84,11 @@ static void select_end(Tool *tool, Document *doc, InputEvent *ev) {
 }
 
 static const ToolVTable select_vtable = {
-    .id = "select", .name = "Select", .icon_name = "edit-select-all-symbolic",
+    .id = "select",
+    .group_id = "transform", .name = "Select",
+    .description = "Select a rectangular region.", .icon_name = "edit-select-all-symbolic",
+    
+    
     .activate = NULL, .deactivate = NULL,
     .stroke_begin = select_begin, .stroke_move = select_move, .stroke_end = select_end,
     .build_options_ui = NULL,

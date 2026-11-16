@@ -1,7 +1,9 @@
 #include "document.h"
 #include "history.h"
 #include "compositor.h"
+#include "../util/log.h"
 #include <glib.h>
+#include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -27,6 +29,8 @@ struct Document {
     PixelBuffer *stroke_before;
     Layer *stroke_layer;
     char *stroke_name;
+    PixelBuffer *floating;
+    int floating_x, floating_y;
 };
 
 /* ── Notifications ─────────────────────────────────────────────────── */
@@ -328,6 +332,18 @@ void document_begin_stroke (Document *d, const char *name) {
 
 void document_end_stroke (Document *d) {
     if (!d->stroke_before || !d->stroke_layer) return;
+    
+    // SAFETY: If the canvas was resized during the stroke, abort to prevent heap corruption
+    if (d->stroke_before->width != d->width || d->stroke_before->height != d->height) {
+        LOG_WARN("Stroke aborted: canvas size changed during stroke (was %dx%d, now %dx%d)",
+                 d->stroke_before->width, d->stroke_before->height, d->width, d->height);
+        pixel_buffer_free(d->stroke_before);
+        d->stroke_before = NULL;
+        d->stroke_layer = NULL;
+        if (d->stroke_name) { g_free(d->stroke_name); d->stroke_name = NULL; }
+        return;
+    }
+    
     Layer *l = d->stroke_layer;
     
     int minx = d->width, miny = d->height, maxx = -1, maxy = -1;
@@ -412,6 +428,145 @@ static void apply_blur_raw(Document *d, int cx, int cy, int r) {
 }
 
 void document_apply_dot (Document *d, int cx, int cy, Pixel c, int r) { apply_dot_raw(d,cx,cy,c,r); d->dirty=true; }
+
+
+
+void document_apply_brush_blend (Document *doc, int cx, int cy, int radius, float hardness, Pixel color, int blend_mode) {
+    if (doc->active_layer < 0 || doc->active_layer >= doc->layer_count) return;
+    Layer *l = doc->layers[doc->active_layer];
+    if (!l || !l->visible || !l->buffer) return;
+
+    int x0 = MAX (cx - radius, 0), y0 = MAX (cy - radius, 0);
+    int x1 = MIN (cx + radius + 1, doc->width), y1 = MIN (cy + radius + 1, doc->height);
+
+    BlendMode mode = BLEND_NORMAL;
+    if (blend_mode == 1) mode = BLEND_MULTIPLY;
+    else if (blend_mode == 2) mode = BLEND_SCREEN;
+    else if (blend_mode == 3) mode = BLEND_OVERLAY;
+    else if (blend_mode == 4) mode = BLEND_DIFFERENCE;
+    else if (blend_mode == 5) mode = BLEND_ADDITION;
+
+    float radius_sq = (float)(radius * radius);
+    float edge_r = radius * hardness;
+    float edge_sq = edge_r * edge_r;
+
+    for (int y = y0; y < y1; y++) {
+        Pixel *row = &l->buffer->pixels[(gsize)y * doc->width];
+        for (int x = x0; x < x1; x++) {
+            if (!pixel_in_sel(doc, x, y)) continue;
+            
+            float dx = (float)(x - cx);
+            float dy = (float)(y - cy);
+            float dist_sq = dx*dx + dy*dy;
+            
+            if (dist_sq <= radius_sq) {
+                float alpha_mult = 1.0f;
+                if (dist_sq > edge_sq && radius_sq > edge_sq) {
+                    float t = (dist_sq - edge_sq) / (radius_sq - edge_sq);
+                    alpha_mult = 1.0f - t;
+                }
+                
+                if (alpha_mult > 0.001f) {
+                    Pixel src = color;
+                    src.a = (uint8_t)(src.a * alpha_mult);
+                    compositor_blend_pixel(&row[x], &src, 1.0f, mode);
+                }
+            }
+        }
+    }
+    doc->dirty = true;
+}
+
+void document_apply_soft_erase (Document *doc, int cx, int cy, int radius, float hardness, float opacity) {
+    if (doc->active_layer < 0 || doc->active_layer >= doc->layer_count) return;
+    Layer *l = doc->layers[doc->active_layer];
+    if (!l || !l->visible || !l->buffer) return;
+
+    int x0 = MAX (cx - radius, 0), y0 = MAX (cy - radius, 0);
+    int x1 = MIN (cx + radius + 1, doc->width), y1 = MIN (cy + radius + 1, doc->height);
+    float radius_sq = (float)(radius * radius);
+    float edge_r = radius * hardness;
+    float edge_sq = edge_r * edge_r;
+
+    for (int y = y0; y < y1; y++) {
+        Pixel *row = &l->buffer->pixels[(gsize)y * doc->width];
+        for (int x = x0; x < x1; x++) {
+            if (!pixel_in_sel(doc, x, y)) continue;
+            
+            float dx = (float)(x - cx);
+            float dy = (float)(y - cy);
+            float dist_sq = dx*dx + dy*dy;
+            
+            if (dist_sq <= radius_sq) {
+                float alpha_mult = 1.0f;
+                if (dist_sq > edge_sq && radius_sq > edge_sq) {
+                    float t = (dist_sq - edge_sq) / (radius_sq - edge_sq);
+                    alpha_mult = 1.0f - t;
+                }
+                alpha_mult *= opacity;
+                
+                if (alpha_mult > 0.001f) {
+                    float scale = 1.0f - alpha_mult;
+                    row[x].a = (uint8_t)(row[x].a * scale);
+                    if (row[x].a == 0) row[x].r = row[x].g = row[x].b = 0;
+                }
+            }
+        }
+    }
+    doc->dirty = true;
+}
+
+void document_apply_brush (Document *doc, int cx, int cy, int radius, float hardness, float opacity, Pixel color) {
+    if (doc->active_layer < 0 || doc->active_layer >= doc->layer_count) return;
+    Layer *l = doc->layers[doc->active_layer];
+    if (!l || !l->visible || !l->buffer) return;
+
+    int x0 = MAX (cx - radius, 0), y0 = MAX (cy - radius, 0);
+    int x1 = MIN (cx + radius + 1, doc->width), y1 = MIN (cy + radius + 1, doc->height);
+    float radius_sq = (float)(radius * radius);
+    float edge_r = radius * hardness;
+    float edge_sq = edge_r * edge_r;
+
+    for (int y = y0; y < y1; y++) {
+        Pixel *row = &l->buffer->pixels[(gsize)y * doc->width];
+        for (int x = x0; x < x1; x++) {
+            if (!pixel_in_sel(doc, x, y)) continue;
+            
+            float dx = (float)(x - cx);
+            float dy = (float)(y - cy);
+            float dist_sq = dx*dx + dy*dy;
+            
+            if (dist_sq <= radius_sq) {
+                /* Linear falloff approximation using squared distance
+                 * (avoids sqrtf so we don't need libm on Linux) */
+                float alpha_mult = 1.0f;
+                if (dist_sq > edge_sq && radius_sq > edge_sq) {
+                    float t = (dist_sq - edge_sq) / (radius_sq - edge_sq);
+                    /* Convert squared t to linear for smoother falloff */
+                    alpha_mult = 1.0f - t;
+                }
+                alpha_mult *= opacity;
+                
+                if (alpha_mult > 0.001f) {
+                    Pixel src = color;
+                    src.a = (uint8_t)(src.a * alpha_mult);
+                    float sa = src.a / 255.0f;
+                    float da = row[x].a / 255.0f;
+                    float out_a = sa + da * (1.0f - sa);
+                    
+                    if (out_a > 0.0f) {
+                        row[x].r = (uint8_t)((src.r * sa + row[x].r * da * (1.0f - sa)) / out_a);
+                        row[x].g = (uint8_t)((src.g * sa + row[x].g * da * (1.0f - sa)) / out_a);
+                        row[x].b = (uint8_t)((src.b * sa + row[x].b * da * (1.0f - sa)) / out_a);
+                        row[x].a = (uint8_t)(out_a * 255.0f);
+                    }
+                }
+            }
+        }
+    }
+    doc->dirty = true;
+}
+
 void document_apply_erase (Document *d, int cx, int cy, int r) { apply_dot_raw(d,cx,cy,(Pixel){0,0,0,0},r); d->dirty=true; }
 void document_apply_blur (Document *d, int cx, int cy, int r) { apply_blur_raw(d,cx,cy,r); d->dirty=true; }
 
@@ -559,7 +714,61 @@ const char *document_history_label_at (const Document *d, int idx) {
 
 
 
+
+
+void document_set_floating(Document *doc, PixelBuffer *buf, int x, int y) {
+    doc->floating = buf;
+    doc->floating_x = x;
+    doc->floating_y = y;
+    document_invalidate(doc);
+}
+
+PixelBuffer *document_get_floating(Document *doc, int *x, int *y) {
+    if (x) *x = doc->floating_x;
+    if (y) *y = doc->floating_y;
+    return doc->floating;
+}
+
+void document_resize(Document *doc, int nw, int nh) {
+    if (nw <= 0 || nh <= 0 || (nw == doc->width && nh == doc->height)) return;
+    
+    // FIX: Abort any active stroke to prevent out-of-bounds reads in document_end_stroke
+    if (doc->stroke_before) {
+        pixel_buffer_free(doc->stroke_before);
+        doc->stroke_before = NULL;
+        doc->stroke_layer = NULL;
+    }
+    if (doc->stroke_name) {
+        g_free(doc->stroke_name);
+        doc->stroke_name = NULL;
+    }
+    
+    Pixel *new_comp = g_new0(Pixel, (gsize)nw * nh);
+    for (int i = 0; i < doc->layer_count; i++) {
+        Layer *l = doc->layers[i];
+        PixelBuffer *new_buf = pixel_buffer_new(nw, nh);
+        int cw = MIN(doc->width, nw);
+        int ch = MIN(doc->height, nh);
+        for (int y = 0; y < ch; y++) {
+            memcpy(&new_buf->pixels[(gsize)y * nw], &l->buffer->pixels[(gsize)y * doc->width], (gsize)cw * sizeof(Pixel));
+        }
+        pixel_buffer_free(l->buffer);
+        l->buffer = new_buf;
+    }
+    g_free(doc->composite);
+    doc->composite = new_comp;
+    doc->width = nw;
+    doc->height = nh;
+    
+    doc->has_sel = false;
+    
+    document_invalidate(doc);
+    notify_layers(doc);
+    notify_selection(doc);
+}
+
 void document_clear_history (Document *doc) {
     command_stack_clear(&doc->stack);
     doc->dirty = false;
 }
+

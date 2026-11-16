@@ -17,7 +17,13 @@
 #include "../domain/layer.h"
 #include "../domain/pixel_buffer.h"
 
-#define PAINT_PLUGIN_ABI_VERSION 1
+#define PAINT_PLUGIN_ABI_VERSION 2
+
+
+/* ── Host API (Implemented by the host, callable by addons) ───────── */
+Pixel paint_plugin_get_primary_color (void);
+void  paint_plugin_get_setting (const char *key, char *buf, int buf_len);
+void  paint_plugin_set_setting (const char *key, const char *value);
 
 typedef struct {
     int         api_version;
@@ -25,7 +31,9 @@ typedef struct {
     const char *name;
     const char *version;
     const char *author;
+    const char *group_id;
     Tool       *(*create_tool)(void);   /* return a fresh Tool* each call */
+    GtkWidget  *(*build_settings_ui)(void); /* optional: return a widget for the settings dialog */
 } PaintPluginDescriptor;
 
 typedef const PaintPluginDescriptor *(*PaintPluginGetDescriptorFunc)(void);

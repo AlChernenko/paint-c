@@ -22,8 +22,10 @@
  * the app's whole lifetime. */
 void tool_engine_set_active (Tool *tool, Document *doc);
 Tool *tool_engine_get_active (void);
+Document *tool_engine_get_document (void);
 
 Tool *tool_engine_get_active (void);
+Document *tool_engine_get_document (void);
 
 /* Called by the canvas. Each safely no-ops if there is no active tool. */
 void tool_engine_dispatch_begin (Document *doc, InputEvent *ev);

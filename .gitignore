@@ -7,12 +7,12 @@ build-*/
 *.dll
 *.exe
 
-# Addon compiled binaries — sources are tracked, artifacts are not
+# Addon binaries
 addons/*/*.so
 addons/*/*.dll
 addons/*/build/
 
-# Backups from the upgrade scripts
+# Backups
 backup_*/
 *.bak
 
@@ -22,17 +22,16 @@ backup_*/
 *.swp
 *~
 .cache/
-.direnv/
 
-# Local logs
+# Logs
 *.log
 /tmp/
 
-# Meson-generated
+# Meson generated
 compile_commands.json
 meson-logs/
 meson-info/
 
-# OS noise
+# OS
 .DS_Store
 Thumbs.db

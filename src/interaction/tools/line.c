@@ -61,7 +61,11 @@ static void line_end(Tool *tool, Document *doc, InputEvent *ev) {
 }
 
 static const ToolVTable line_vtable = {
-    .id = "line", .name = "Line", .icon_name = "insert-object-symbolic",
+    .id = "line",
+    .group_id = "misc", .name = "Line",
+    .description = "Draw straight lines.", .icon_name = "insert-object-symbolic",
+    
+    
     .activate = NULL, .deactivate = NULL,
     .stroke_begin = line_begin, .stroke_move = line_move, .stroke_end = line_end,
     .build_options_ui = NULL,

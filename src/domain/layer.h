@@ -16,8 +16,9 @@ typedef enum {
     BLEND_NORMAL = 0,
     BLEND_MULTIPLY,
     BLEND_SCREEN,
-    /* TODO (M4): add OVERLAY, SOFT_LIGHT — keep additions at the end so
-     * serialized project files remain compatible. */
+    BLEND_OVERLAY,
+    BLEND_DIFFERENCE,
+    BLEND_ADDITION,
 } BlendMode;
 
 typedef struct {

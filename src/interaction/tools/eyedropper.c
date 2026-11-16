@@ -23,7 +23,9 @@ eyedropper_pick (Tool *tool, Document *doc, InputEvent *ev)
 }
 
 static const ToolVTable eyedropper_vtable = {
-    .id = "eyedropper", .name = "Eyedropper", .icon_name = NULL,
+    .id = "eyedropper",
+    .group_id = "misc", .name = "Eyedropper",
+    .description = "Pick a color from the canvas.", .icon_name = NULL,
     .activate = NULL, .deactivate = NULL,
     .stroke_begin = eyedropper_pick, .stroke_move = eyedropper_pick, .stroke_end = NULL,
     .build_options_ui = NULL,

@@ -24,6 +24,7 @@ static const ToolVTable eraser_vtable = {
     .id               = "eraser",
     .name             = "Eraser",
     .icon_name        = "paint-eraser-symbolic",
+    .description = "Erase pixels to transparency.",
     .activate         = NULL,
     .deactivate       = NULL,
     .stroke_begin     = eraser_stroke,

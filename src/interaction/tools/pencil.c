@@ -49,7 +49,9 @@ pencil_stroke_end (Tool *tool, Document *doc, InputEvent *ev)
 }
 
 static const ToolVTable pencil_vtable = {
-    .id = "pencil", .name = "Pencil", .icon_name = NULL,
+    .id = "pencil",
+    .group_id = "brush", .name = "Pencil",
+    .description = "Draw hard, 1px lines.", .icon_name = NULL,
     .activate = NULL, .deactivate = NULL,
     .stroke_begin = pencil_stroke_begin,
     .stroke_move  = pencil_stroke_move,

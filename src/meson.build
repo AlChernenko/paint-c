@@ -15,13 +15,17 @@ sources = files(
   'platform/file_io.c',                 # NEW
   'interaction/tool_engine.c',
   'interaction/tools/pencil.c',
-  'interaction/tools/eraser.c',         # NEW
+  'interaction/tools/brush.c',
+  'interaction/tools/eraser.c',
+  'interaction/tools/soft_eraser.c',         # NEW
   'interaction/tools/eyedropper.c',
   'interaction/tools/blur.c',
   'platform/clipboard.c',
   'interaction/tools/select_rect.c',
   'interaction/tools/line.c',
   'interaction/tools/move.c',
+  'interaction/tools/rotate.c',
+  'interaction/transform.c',
   'shell/swatch.c',
   'shell/window.c',
 )

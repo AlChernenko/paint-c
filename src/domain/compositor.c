@@ -1,6 +1,7 @@
 #include "compositor.h"
 #include <glib.h>
 #include <string.h>
+#include <math.h>
 
 /* Straight-alpha source-over, plus multiply/screen.
  *
@@ -31,6 +32,14 @@ compositor_blend_pixel (Pixel *dst, const Pixel *src,
         sr = 1.0f - (1.0f - sr) * (1.0f - dr);
         sg = 1.0f - (1.0f - sg) * (1.0f - dg);
         sb = 1.0f - (1.0f - sb) * (1.0f - db);
+    } else if (mode == BLEND_OVERLAY) {
+        sr = (dr <= 0.5f) ? (2.0f * dr * sr) : (1.0f - 2.0f * (1.0f - dr) * (1.0f - sr));
+        sg = (dg <= 0.5f) ? (2.0f * dg * sg) : (1.0f - 2.0f * (1.0f - dg) * (1.0f - sg));
+        sb = (db <= 0.5f) ? (2.0f * db * sb) : (1.0f - 2.0f * (1.0f - db) * (1.0f - sb));
+    } else if (mode == BLEND_DIFFERENCE) {
+        sr = fabsf(dr - sr); sg = fabsf(dg - sg); sb = fabsf(db - sb);
+    } else if (mode == BLEND_ADDITION) {
+        sr = MIN(1.0f, dr + sr); sg = MIN(1.0f, dg + sg); sb = MIN(1.0f, db + sb);
     }
     /* BLEND_NORMAL: sr/sg/sb unchanged. */
 

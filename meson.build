@@ -22,6 +22,10 @@ glib_dep   = dependency('glib-2.0', version: '>=2.72')
 gobject_dep = dependency('gobject-2.0')
 gmodule_dep = dependency('gmodule-2.0')
 
-deps = [gtk_dep, glib_dep, gobject_dep, gmodule_dep]
+# Link the math library explicitly for sqrtf/powf/etc.
+cc = meson.get_compiler('c')
+m_dep = cc.find_library('m', required: false)
+
+deps = [gtk_dep, glib_dep, gobject_dep, gmodule_dep, m_dep]
 
 subdir('src')

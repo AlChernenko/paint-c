@@ -36,6 +36,7 @@ struct _PaintCanvas {
 
 G_DEFINE_FINAL_TYPE (PaintCanvas, paint_canvas, GTK_TYPE_WIDGET)
 
+
 static GdkTexture *
 build_texture_from_doc (Document *doc)
 {
@@ -84,7 +85,8 @@ canvas_on_composite_changed (void *ud)
 static void
 canvas_on_selection_changed (void *ud)
 {
-    gtk_widget_queue_draw (GTK_WIDGET (PAINT_CANVAS (ud)));
+    gtk_widget_queue_resize (GTK_WIDGET (ud));
+    gtk_widget_queue_draw (GTK_WIDGET (ud));
 }
 
 static const DocumentObserver canvas_observer = {
@@ -430,6 +432,7 @@ paint_canvas_init (PaintCanvas *self)
 {
     self->zoom = 1.0;
     gtk_widget_set_focusable (GTK_WIDGET (self), TRUE);
+    gtk_widget_set_overflow (GTK_WIDGET (self), GTK_OVERFLOW_HIDDEN);
     gtk_widget_set_hexpand (GTK_WIDGET (self), FALSE);
     gtk_widget_set_vexpand (GTK_WIDGET (self), FALSE);
     gtk_widget_set_halign  (GTK_WIDGET (self), GTK_ALIGN_START);

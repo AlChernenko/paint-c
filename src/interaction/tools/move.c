@@ -1,19 +1,16 @@
 #include "move.h"
 #include "../input_event.h"
+#include "../transform.h"
 #include <string.h>
-#include <stdlib.h>
 
 typedef struct {
     int drag_start_x, drag_start_y;
-    int sel_start_x, sel_start_y, sel_start_w, sel_start_h;
-    int hole_x, hole_y, hole_w, hole_h;
+    int sel_start_x, sel_start_y;
     int resize_edge;
-    gboolean dragging, active;
-    PixelBuffer *floating, *orig_floating, *backup_layer;
-    int layer_w, layer_h;
+    gboolean dragging;
+    int orig_base_w, orig_base_h;
+    double orig_center_x, orig_center_y;
 } MoveData;
-
-static void move_commit(Tool *tool, Document *doc);
 
 static PixelBuffer *scale_buffer_bilinear(const PixelBuffer *src, int nw, int nh) {
     PixelBuffer *dst = pixel_buffer_new(nw, nh);
@@ -38,16 +35,16 @@ static PixelBuffer *scale_buffer_bilinear(const PixelBuffer *src, int nw, int nh
     return dst;
 }
 
-static void move_activate(Tool *tool, Document *doc) {
-    (void)doc; MoveData *md = tool->user_data;
-    md->active = FALSE; md->dragging = FALSE;
-    if (md->floating) { pixel_buffer_free(md->floating); md->floating = NULL; }
-    if (md->orig_floating) { pixel_buffer_free(md->orig_floating); md->orig_floating = NULL; }
-}
-
 static void move_begin(Tool *tool, Document *doc, InputEvent *ev) {
     MoveData *md = tool->user_data;
     if (!document_has_selection(doc)) return;
+
+    TransformContext *ctx = transform_get();
+    if (!ctx->active) {
+        transform_begin(doc);
+        if (!ctx->active) return;
+    }
+
     SelectionRect r = document_selection(doc);
     int margin = 8;
     int in_left = (ev->x > r.x - margin && ev->x < r.x + margin);
@@ -64,85 +61,77 @@ static void move_begin(Tool *tool, Document *doc, InputEvent *ev) {
     else if (in_top && inside_x) hit = 3; else if (in_bottom && inside_x) hit = 4;
     else if (inside_x && inside_y) hit = 5;
 
-    if (hit == 0) { move_commit(tool, doc); document_clear_selection(doc); return; }
-
-    if (!md->active) {
-        md->active = TRUE; md->hole_x = r.x; md->hole_y = r.y; md->hole_w = r.w; md->hole_h = r.h;
-        int w = document_width(doc), h = document_height(doc);
-        md->layer_w = w; md->layer_h = h;
-        Layer *l = document_layer_at(doc, document_active_layer(doc));
-        if (!md->backup_layer) md->backup_layer = pixel_buffer_new(w, h);
-        memcpy(md->backup_layer->pixels, l->buffer->pixels, (gsize)w * h * sizeof(Pixel));
-        md->floating = document_copy_region(doc);
-        md->orig_floating = pixel_buffer_new(md->floating->width, md->floating->height);
-        memcpy(md->orig_floating->pixels, md->floating->pixels, (gsize)md->floating->width * md->floating->height * sizeof(Pixel));
-        Pixel tr = {0, 0, 0, 0};
-        for (int y = r.y; y < r.y + r.h; y++) for (int x = r.x; x < r.x + r.w; x++) l->buffer->pixels[(gsize)y * w + x] = tr;
-        document_begin_stroke(doc, "Transform Pixels");
+    if (hit == 0) {
+        transform_commit(doc);
+        document_clear_selection(doc);
+        return;
     }
-    md->drag_start_x = (int)(ev->x + 0.5); md->drag_start_y = (int)(ev->y + 0.5);
-    md->sel_start_x = r.x; md->sel_start_y = r.y; md->sel_start_w = r.w; md->sel_start_h = r.h;
-    md->dragging = TRUE; md->resize_edge = hit;
+
+    md->drag_start_x = (int)(ev->x + 0.5);
+    md->drag_start_y = (int)(ev->y + 0.5);
+    md->sel_start_x = r.x; md->sel_start_y = r.y;
+    md->orig_base_w = ctx->base_w;
+    md->orig_base_h = ctx->base_h;
+    md->orig_center_x = ctx->ref_center_x;
+    md->orig_center_y = ctx->ref_center_y;
+    
+    md->dragging = TRUE;
+    md->resize_edge = hit;
 }
 
 static void move_move(Tool *tool, Document *doc, InputEvent *ev) {
     MoveData *md = tool->user_data;
-    if (!md->dragging || !md->active || !md->floating) return;
-    int dx = (int)(ev->x + 0.5) - md->drag_start_x, dy = (int)(ev->y + 0.5) - md->drag_start_y;
-    int w = md->layer_w;
-    Layer *l = document_layer_at(doc, document_active_layer(doc));
-    memcpy(l->buffer->pixels, md->backup_layer->pixels, (gsize)w * md->layer_h * sizeof(Pixel));
-    Pixel tr = {0, 0, 0, 0};
-    for (int y = md->hole_y; y < md->hole_y + md->hole_h; y++) {
-        for (int x = md->hole_x; x < md->hole_x + md->hole_w; x++) {
-            if (x >= 0 && x < w && y >= 0 && y < md->layer_h) l->buffer->pixels[(gsize)y * w + x] = tr;
-        }
-    }
-    int nx = md->sel_start_x, ny = md->sel_start_y, nw = md->sel_start_w, nh = md->sel_start_h;
+    if (!md->dragging) return;
+    TransformContext *ctx = transform_get();
+    if (!ctx->active) return;
+
+    int dx = (int)(ev->x + 0.5) - md->drag_start_x;
+    int dy = (int)(ev->y + 0.5) - md->drag_start_y;
+
     if (md->resize_edge == 5) {
-        nx += dx; ny += dy;
-        if (md->floating != md->orig_floating) {
-            pixel_buffer_free(md->floating);
-            md->floating = pixel_buffer_new(md->orig_floating->width, md->orig_floating->height);
-            memcpy(md->floating->pixels, md->orig_floating->pixels, (gsize)md->orig_floating->width * md->orig_floating->height * sizeof(Pixel));
-        }
-        nw = md->floating->width; nh = md->floating->height;
+        ctx->ref_center_x = md->orig_center_x + dx;
+        ctx->ref_center_y = md->orig_center_y + dy;
     } else {
-        if (md->resize_edge == 1 || md->resize_edge == 6 || md->resize_edge == 8) { nx += dx; nw -= dx; }
-        if (md->resize_edge == 2 || md->resize_edge == 7 || md->resize_edge == 9) { nw += dx; }
-        if (md->resize_edge == 3 || md->resize_edge == 6 || md->resize_edge == 7) { ny += dy; nh -= dy; }
-        if (md->resize_edge == 4 || md->resize_edge == 8 || md->resize_edge == 9) { nh += dy; }
+        int nw = md->orig_base_w;
+        int nh = md->orig_base_h;
+        double cx = md->orig_center_x;
+        double cy = md->orig_center_y;
+
+        if (md->resize_edge == 1 || md->resize_edge == 6 || md->resize_edge == 8) { nw -= dx; cx += dx / 2.0; }
+        if (md->resize_edge == 2 || md->resize_edge == 7 || md->resize_edge == 9) { nw += dx; cx += dx / 2.0; }
+        if (md->resize_edge == 3 || md->resize_edge == 6 || md->resize_edge == 7) { nh -= dy; cy += dy / 2.0; }
+        if (md->resize_edge == 4 || md->resize_edge == 8 || md->resize_edge == 9) { nh += dy; cy += dy / 2.0; }
+
         if (nw < 4) nw = 4;
         if (nh < 4) nh = 4;
-        PixelBuffer *scaled = scale_buffer_bilinear(md->orig_floating, nw, nh);
-        pixel_buffer_free(md->floating); md->floating = scaled;
+        
+        ctx->base_w = nw;
+        ctx->base_h = nh;
+        ctx->ref_center_x = cx;
+        ctx->ref_center_y = cy;
+
+        if (ctx->base_floating) pixel_buffer_free(ctx->base_floating);
+        ctx->base_floating = scale_buffer_bilinear(ctx->orig_floating, nw, nh);
     }
-    for (int by = 0; by < md->floating->height; by++) {
-        int py = ny + by; if (py < 0 || py >= md->layer_h) continue;
-        for (int bx = 0; bx < md->floating->width; bx++) {
-            int px = nx + bx; if (px < 0 || px >= w) continue;
-            l->buffer->pixels[(gsize)py * w + px] = md->floating->pixels[(gsize)by * md->floating->width + bx];
-        }
-    }
-    document_set_selection(doc, nx, ny, nw, nh); document_invalidate(doc);
+
+    transform_update(doc);
 }
 
-static void move_end(Tool *tool, Document *doc, InputEvent *ev) { (void)doc; (void)ev; ((MoveData *)tool->user_data)->dragging = FALSE; }
-
-static void move_commit(Tool *tool, Document *doc) {
-    MoveData *md = tool->user_data;
-    if (!md->active) return;
-    if (md->floating) { pixel_buffer_free(md->floating); md->floating = NULL; }
-    if (md->orig_floating) { pixel_buffer_free(md->orig_floating); md->orig_floating = NULL; }
-    document_end_stroke(doc); md->active = FALSE;
+static void move_end(Tool *tool, Document *doc, InputEvent *ev) {
+    (void)ev; (void)doc;
+    ((MoveData *)tool->user_data)->dragging = FALSE;
 }
-static void move_deactivate(Tool *tool, Document *doc) { move_commit(tool, doc); }
 
 static const ToolVTable move_vtable = {
     .id = "move", .name = "Transform", .icon_name = "transform-scale-symbolic",
-    .activate = move_activate, .deactivate = move_deactivate,
+    .group_id = "transform",
+    .description = "Move and resize selected pixels.",
     .stroke_begin = move_begin, .stroke_move = move_move, .stroke_end = move_end,
-    .build_options_ui = NULL,
 };
 
-Tool *move_tool_new(void) { Tool *t = g_new0(Tool, 1); t->vtable = &move_vtable; t->user_data = g_new0(MoveData, 1); return t; }
+Tool *move_tool_new(void) {
+    Tool *t = g_new0(Tool, 1);
+    t->vtable = &move_vtable;
+    t->user_data = g_new0(MoveData, 1);
+    return t;
+}

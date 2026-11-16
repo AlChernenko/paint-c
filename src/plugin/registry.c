@@ -1,8 +1,9 @@
 #include "registry.h"
 #include "../util/log.h"
+#include "../util/config.h"
 #include <string.h>
 
-typedef struct { GModule *mod; const PaintPluginDescriptor *desc; } Entry;
+typedef struct { GModule *mod; const PaintPluginDescriptor *desc; bool enabled; bool loaded; bool needs_restart; } Entry;
 static Entry *g_entries = NULL;
 static int    g_count   = 0;
 static int    g_cap     = 0;
@@ -47,6 +48,12 @@ plugin_registry_init (const char *dir)
         }
         g_entries[g_count].mod  = mod;
         g_entries[g_count].desc = d;
+        char key[256];
+        snprintf(key, sizeof key, "addon/%s/enabled", d->id);
+        g_entries[g_count].enabled = config_get_bool(key, true);
+        snprintf(key, sizeof key, "addon/%s/needs_restart", d->id);
+        g_entries[g_count].needs_restart = config_get_bool(key, false);
+        g_entries[g_count].loaded = g_entries[g_count].enabled;
         g_count++;
         LOG_INFO ("loaded plugin: %s (%s) from %s", d->name, d->id, name);
         g_free (path);
@@ -73,4 +80,36 @@ plugin_registry_cleanup (void)
     g_free (g_entries);
     g_entries = NULL;
     g_count = g_cap = 0;
+}
+
+bool plugin_registry_get_enabled (int i) { return (i >= 0 && i < g_count) ? g_entries[i].enabled : false; }
+void plugin_registry_set_enabled (int i, bool enabled) {
+    if (i < 0 || i >= g_count) return;
+    g_entries[i].enabled = enabled;
+    char key[256];
+    snprintf(key, sizeof key, "addon/%s/enabled", g_entries[i].desc->id);
+    config_set_bool(key, enabled);
+    config_save();
+    
+    if (!enabled) {
+        g_entries[i].loaded = false;
+    } else {
+        if (!g_entries[i].needs_restart) g_entries[i].loaded = true;
+    }
+}
+const PaintPluginDescriptor *plugin_registry_get_desc (int i) { return (i >= 0 && i < g_count) ? g_entries[i].desc : NULL; }
+
+bool plugin_registry_get_loaded (int i) { return (i >= 0 && i < g_count) ? g_entries[i].loaded : false; }
+bool plugin_registry_needs_restart (int i) { return (i >= 0 && i < g_count) ? g_entries[i].needs_restart : false; }
+void plugin_registry_set_needs_restart (int i, bool val) {
+    if (i < 0 || i >= g_count) return;
+    g_entries[i].needs_restart = val;
+    char key[256];
+    snprintf(key, sizeof key, "addon/%s/needs_restart", g_entries[i].desc->id);
+    config_set_bool(key, val);
+    config_save();
+}
+bool plugin_registry_any_pending_restart (void) {
+    for (int i = 0; i < g_count; i++) if (g_entries[i].enabled && !g_entries[i].loaded) return true;
+    return false;
 }

@@ -36,6 +36,9 @@ void   document_layer_set_blend_mode (Document *doc, int idx, BlendMode mode);
 
 void document_apply_dot   (Document *doc, int cx, int cy, Pixel color, int radius);
 void document_apply_erase (Document *doc, int cx, int cy, int radius);
+void document_apply_brush (Document *doc, int cx, int cy, int radius, float hardness, float opacity, Pixel color);
+void document_apply_soft_erase (Document *doc, int cx, int cy, int radius, float hardness, float opacity);
+void document_apply_brush_blend (Document *doc, int cx, int cy, int radius, float hardness, Pixel color, int blend_mode);
 void document_apply_blur  (Document *doc, int cx, int cy, int radius);
 void document_apply_stroke       (Document *doc, int x0, int y0, int x1, int y1, Pixel color, int radius);
 void document_apply_erase_stroke (Document *doc, int x0, int y0, int x1, int y1, int radius);
@@ -66,3 +69,7 @@ void   document_clear_region    (Document *doc);
 DocumentObserverHandle document_add_observer    (Document *doc, const DocumentObserver *obs, void *user_data);
 void                   document_remove_observer (Document *doc, DocumentObserverHandle h);
 void document_clear_history (Document *doc);
+void document_resize (Document *doc, int new_w, int new_h);
+
+void document_set_floating (Document *doc, PixelBuffer *buf, int x, int y);
+PixelBuffer *document_get_floating (Document *doc, int *x, int *y);

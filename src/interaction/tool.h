@@ -27,8 +27,10 @@ typedef struct Tool Tool;
 
 typedef struct {
     const char *id;                 /* unique, e.g. "pencil" */
-    const char *name;               /* user-visible, e.g. "Pencil" */
-    const char *icon_name;          /* optional, may be NULL */
+    const char *name;
+    const char *description;               /* user-visible, e.g. "Pencil" */
+    const char *icon_name;
+    const char *group_id;          /* optional, may be NULL */
 
     void (*activate)  (Tool *tool, Document *doc);
     void (*deactivate)(Tool *tool, Document *doc);
