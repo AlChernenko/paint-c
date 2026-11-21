@@ -1,9 +1,11 @@
 #include "window.h"
 #include "../domain/document.h"
+#include "../domain/effects.h"
 #include "../platform/canvas.h"
 #include "../platform/file_io.h"
 #include "../platform/navigator.h"
 #include "../platform/clipboard.h"
+#include "../platform/launcher.h"
 #include "../interaction/tool_engine.h"
 #include "../interaction/transform.h"
 #include "../interaction/tools/pencil.h"
@@ -16,6 +18,7 @@
 #include "../interaction/tools/line.h"
 #include "../interaction/tools/move.h"
 #include "../interaction/tools/rotate.h"
+#include "../interaction/tools/shape.h"
 #include "../plugin/registry.h"
 #include "../util/log.h"
 #include "../util/config.h"
@@ -67,7 +70,7 @@ struct _PaintWindow {
     Document *document;
     char *current_path;
 
-    Tool *pencil, *brush, *eraser, *soft_eraser, *eyedropper, *blur, *select, *line, *move, *rotate;
+    Tool *pencil, *brush, *eraser, *soft_eraser, *eyedropper, *blur, *select, *line, *move, *rotate, *shape;
     GPtrArray *plugin_tools;
     GPtrArray *all_tools;
     GtkWidget *tools_list_box;
@@ -75,6 +78,9 @@ struct _PaintWindow {
     GHashTable *group_last_tool;
     gboolean show_all_tools;
     char *current_group;
+
+    GtkWidget *effects_btn;      /* toolbar button → effects popover */
+    GtkWidget *effects_popover;
 
     GtkWidget *canvas;
     GtkWidget *layer_list;
@@ -233,6 +239,9 @@ static void action_tool_blur (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_tool_select (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_tool_line (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_tool_move (GSimpleAction *a, GVariant *p, gpointer ud);
+static void action_tool_shape (GSimpleAction *a, GVariant *p, gpointer ud);
+static void action_layer_flatten (GSimpleAction *a, GVariant *p, gpointer ud);
+static void action_check_updates (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_group_brush (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_group_eraser (GSimpleAction *a, GVariant *p, gpointer ud);
 static void action_group_transform (GSimpleAction *a, GVariant *p, gpointer ud);
