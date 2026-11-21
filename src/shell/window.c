@@ -25,6 +25,41 @@
 void tool_free (Tool *t);
 #include <string.h>
 
+/* ── GTK version compatibility ─────────────────────────────────────────
+ * GtkColorDialogButton / GtkAlertDialog require GTK >= 4.10. On older
+ * GTK 4 (e.g. Debian bookworm's 4.8) we fall back to the classic
+ * GtkColorButton and a plain dialog so paint-c still builds and runs. */
+#if GTK_CHECK_VERSION(4, 10, 0)
+#  define PNC_GTK_NEW_COLOR_API 1
+#else
+#  define PNC_GTK_NEW_COLOR_API 0
+typedef GtkWidget GtkColorDialogButton;   /* opaque alias: it IS a widget */
+#define GTK_COLOR_DIALOG_BUTTON(w) ((GtkColorDialogButton *)(w))
+#endif
+
+/* Unified helpers used throughout this file. */
+static void
+pnc_color_button_set_rgba (GtkWidget *btn, const GdkRGBA *rgba)
+{
+#if PNC_GTK_NEW_COLOR_API
+    gtk_color_dialog_button_set_rgba (GTK_COLOR_DIALOG_BUTTON (btn), rgba);
+#else
+    gtk_color_chooser_set_rgba (GTK_COLOR_CHOOSER (btn), rgba);
+#endif
+}
+
+static const GdkRGBA *
+pnc_color_button_get_rgba_ptr (GtkWidget *btn, GdkRGBA *scratch)
+{
+#if PNC_GTK_NEW_COLOR_API
+    return gtk_color_dialog_button_get_rgba (GTK_COLOR_DIALOG_BUTTON (btn));
+#else
+    (void)scratch;
+    gtk_color_chooser_get_rgba (GTK_COLOR_CHOOSER (btn), scratch);
+    return scratch;
+#endif
+}
+
 static Pixel g_primary_color = { 0, 0, 0, 255 };
 
 struct _PaintWindow {
@@ -318,10 +353,23 @@ static void paint_window_set_document (PaintWindow *self, Document *doc, const c
 
 /* ── File Dialogs ───────────────────────────────────────────────────── */
 static void show_error (PaintWindow *self, const char *title, const char *msg) {
+#if GTK_CHECK_VERSION(4, 10, 0)
     GtkAlertDialog *d = gtk_alert_dialog_new("%s", title);
     gtk_alert_dialog_set_detail(d, msg);
     gtk_alert_dialog_show(d, GTK_WINDOW(self));
     g_object_unref(d);
+#else
+    /* GTK 4.8: GtkMessageDialog with the old destroy-with-parent flag set. */
+    GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(self),
+                                          GTK_DIALOG_DESTROY_WITH_PARENT,
+                                          GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                                          "%s", title);
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d), "%s", msg);
+    gtk_window_set_title(GTK_WINDOW(d), "paint-c");
+    /* Present non-modally; destroy when the user dismisses it. */
+    g_signal_connect_swapped(d, "response", G_CALLBACK(gtk_window_destroy), d);
+    gtk_window_present(GTK_WINDOW(d));
+#endif
 }
 
 static void on_new_ok_clicked (GtkButton *btn, gpointer ud) {

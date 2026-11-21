@@ -122,7 +122,7 @@ nav_measure (GtkWidget *widget, GtkOrientation orientation,
              int for_size, int *minimum, int *natural,
              int *min_baseline, int *nat_baseline)
 {
-    (void)widget; (void)for_size;
+    (void)widget; (void)for_size; (void)orientation;
     *minimum = *natural = 180;
     if (min_baseline) *min_baseline = -1;
     if (nat_baseline) *nat_baseline = -1;
@@ -131,7 +131,7 @@ nav_measure (GtkWidget *widget, GtkOrientation orientation,
 static void
 nav_click (GtkGestureClick *g, int npress, double x, double y, gpointer ud)
 {
-    (void)npress;
+    (void)npress; (void)g;
     PaintNavigator *self = PAINT_NAVIGATOR (ud);
     if (!self->document || !self->hadj || !self->vadj || self->zoom <= 0) return;
 
