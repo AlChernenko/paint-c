@@ -304,7 +304,6 @@ static const DocumentObserver win_observer = {
 
 static void paint_window_set_document (PaintWindow *self, Document *doc, const char *path) {
     if (self->document) transform_commit(self->document);
-    if (self->document) transform_commit(self->document);
     paint_canvas_set_document(PAINT_CANVAS(self->canvas), NULL);
     if (self->document && self->doc_obs) { document_remove_observer(self->document, self->doc_obs); self->doc_obs = NULL; }
     if (self->document) document_free(self->document);

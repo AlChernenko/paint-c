@@ -130,17 +130,31 @@ typedef struct {
 } MergeCmd;
 static void cmd_merge_undo (Command *c, Document *d) {
     MergeCmd *x = c->data;
-    memcpy(x->bottom->buffer->pixels, x->bottom_before->pixels, (gsize)d->width*d->height*sizeof(Pixel));
+    /* Snapshot was taken at the doc size then; if the canvas was resized
+     * since, copy only the overlapping region (row-by-row) to avoid OOB. */
+    gsize rows = (gsize)MIN (d->height, x->bottom_before->height);
+    for (gsize y = 0; y < rows; y++) {
+        gsize cols = (gsize)MIN (MIN (d->width, x->bottom_before->width),
+                                 x->bottom->buffer->width);
+        memcpy(&x->bottom->buffer->pixels[y * x->bottom->buffer->width],
+               &x->bottom_before->pixels[y * x->bottom_before->width],
+               cols * sizeof(Pixel));
+    }
     if (!x->top_in_doc) { doc_insert_layer_raw(d, x->top, x->top_index); x->top_in_doc = TRUE; }
     d->active_layer = x->top_index;
     document_invalidate(d); notify_layers(d); notify_active(d);
 }
 static void cmd_merge_redo (Command *c, Document *d) {
     MergeCmd *x = c->data;
-    memcpy(x->bottom->buffer->pixels, x->bottom_before->pixels, (gsize)d->width*d->height*sizeof(Pixel));
     gsize n = (gsize)d->width * d->height;
-    for (gsize p = 0; p < n; p++)
-        compositor_blend_pixel(&x->bottom->buffer->pixels[p], &x->top->buffer->pixels[p], x->top->opacity, x->top->blend_mode);
+    gsize lw = x->bottom->buffer->width;
+    gsize lh = x->bottom->buffer->height;
+    for (gsize p = 0; p < n; p++) {
+        gsize px = p % d->width, py = p / d->width;
+        if (px >= lw || py >= lh) continue;   /* layer smaller than doc after resize */
+        compositor_blend_pixel(&x->bottom->buffer->pixels[py * lw + px],
+                               &x->top->buffer->pixels[p], x->top->opacity, x->top->blend_mode);
+    }
     if (x->top_in_doc) {
         int idx = doc_find_layer(d, x->top);
         if (idx >= 0) doc_remove_layer_raw(d, idx);
@@ -159,9 +173,19 @@ typedef struct {
     PixelBuffer *before, *after;
 } RegionCmd;
 static void region_apply (RegionCmd *x, const PixelBuffer *src) {
-    for (int y = 0; y < x->rh; y++)
-        memcpy(&x->layer->buffer->pixels[(gsize)(x->ry+y)*x->layer->buffer->width + x->rx],
-               &src->pixels[(gsize)y*x->rw], (gsize)x->rw * sizeof(Pixel));
+    /* src is a tightly-packed rw x rh snapshot; its stride may differ from
+     * the layer's current width if the document was resized after this
+     * command was recorded.  Iterate by pixel and clamp to both buffers
+     * so undo/redo can never read or write out of bounds. */
+    int lh = x->layer->buffer->height;
+    for (int y = 0; y < x->rh; y++) {
+        int dy = x->ry + y;
+        if (dy < 0 || dy >= lh) continue;
+        int cols = MIN(x->rw, x->layer->buffer->width - x->rx);
+        if (cols <= 0) continue;
+        memcpy(&x->layer->buffer->pixels[(gsize)dy * x->layer->buffer->width + x->rx],
+               &src->pixels[(gsize)y * src->width], (gsize)cols * sizeof(Pixel));
+    }
 }
 static void cmd_region_undo (Command *c, Document *d) { region_apply(c->data, ((RegionCmd*)c->data)->before); document_invalidate(d); }
 static void cmd_region_redo (Command *c, Document *d) { region_apply(c->data, ((RegionCmd*)c->data)->after);  document_invalidate(d); }
@@ -174,9 +198,18 @@ typedef struct {
     PixelBuffer *before, *after;
 } StrokeCmd;
 static void cmd_stroke_apply (StrokeCmd *x, const PixelBuffer *src) {
-    for (int y = 0; y < x->rh; y++)
-        memcpy(&x->layer->buffer->pixels[(gsize)(x->ry+y)*x->layer->buffer->width + x->rx],
-               &src->pixels[(gsize)y*x->rw], (gsize)x->rw * sizeof(Pixel));
+    /* Same stride/clamping safety as region_apply(): the snapshot may have
+     * been taken before a document_resize(), so never assume src stride ==
+     * layer width and always clip rows/columns to the live buffer. */
+    int lh = x->layer->buffer->height;
+    for (int y = 0; y < x->rh; y++) {
+        int dy = x->ry + y;
+        if (dy < 0 || dy >= lh) continue;
+        int cols = MIN(x->rw, x->layer->buffer->width - x->rx);
+        if (cols <= 0) continue;
+        memcpy(&x->layer->buffer->pixels[(gsize)dy * x->layer->buffer->width + x->rx],
+               &src->pixels[(gsize)y * src->width], (gsize)cols * sizeof(Pixel));
+    }
 }
 static void cmd_stroke_undo (Command *c, Document *d) { cmd_stroke_apply(c->data, ((StrokeCmd*)c->data)->before); document_invalidate(d); }
 static void cmd_stroke_redo (Command *c, Document *d) { cmd_stroke_apply(c->data, ((StrokeCmd*)c->data)->after);  document_invalidate(d); }

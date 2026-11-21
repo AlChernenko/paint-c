@@ -9,7 +9,6 @@ sources = files(
   'domain/document.c',
   'domain/history.c',
   'platform/canvas.c',
-  'platform/clipboard.c',
   'platform/checkerboard.c',
   'platform/navigator.c',
   'platform/file_io.c',                 # NEW
