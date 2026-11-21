@@ -19,7 +19,16 @@ typedef enum {
     BLEND_OVERLAY,
     BLEND_DIFFERENCE,
     BLEND_ADDITION,
+    BLEND_DARKEN,
+    BLEND_LIGHTEN,
+    BLEND_COLOR_DODGE,
+    BLEND_COLOR_BURN,
 } BlendMode;
+
+#define BLEND_MODE_COUNT 10
+
+/* User-visible names for the blend-mode dropdown (index == BlendMode). */
+const char *blend_mode_name (BlendMode mode);
 
 typedef struct {
     char        *name;        /* owned; free in layer_free() */
