@@ -40,6 +40,20 @@ compositor_blend_pixel (Pixel *dst, const Pixel *src,
         sr = fabsf(dr - sr); sg = fabsf(dg - sg); sb = fabsf(db - sb);
     } else if (mode == BLEND_ADDITION) {
         sr = MIN(1.0f, dr + sr); sg = MIN(1.0f, dg + sg); sb = MIN(1.0f, db + sb);
+    } else if (mode == BLEND_DARKEN) {
+        sr = MIN(dr, sr); sg = MIN(dg, sg); sb = MIN(db, sb);
+    } else if (mode == BLEND_LIGHTEN) {
+        sr = MAX(dr, sr); sg = MAX(dg, sg); sb = MAX(db, sb);
+    } else if (mode == BLEND_COLOR_DODGE) {
+        /* B(Cb,Cs) = Cb / (1 - Cs), clipped; white source -> white. */
+        sr = (sr >= 1.0f) ? 1.0f : MIN(1.0f, dr / (1.0f - sr));
+        sg = (sg >= 1.0f) ? 1.0f : MIN(1.0f, dg / (1.0f - sg));
+        sb = (sb >= 1.0f) ? 1.0f : MIN(1.0f, db / (1.0f - sb));
+    } else if (mode == BLEND_COLOR_BURN) {
+        /* B(Cb,Cs) = 1 - (1 - Cb) / Cs, clipped; black source -> black. */
+        sr = (sr <= 0.0f) ? 0.0f : 1.0f - MIN(1.0f, (1.0f - dr) / sr);
+        sg = (sg <= 0.0f) ? 0.0f : 1.0f - MIN(1.0f, (1.0f - dg) / sg);
+        sb = (sb <= 0.0f) ? 0.0f : 1.0f - MIN(1.0f, (1.0f - db) / sb);
     }
     /* BLEND_NORMAL: sr/sg/sb unchanged. */
 
@@ -52,11 +66,16 @@ compositor_blend_pixel (Pixel *dst, const Pixel *src,
 
     /* NOTE: this division-by-out is what makes us "straight alpha". The
      * mathematically equivalent premultiplied form is faster and needs no
-     * division — see canvas.c's TODO for a future premultiplied pipeline. */
-    dst->r = (uint8_t)(255.0f * ((sr * sa) + dr * da * (1.0f - sa)) / out + 0.5f);
-    dst->g = (uint8_t)(255.0f * ((sg * sa) + dg * da * (1.0f - sa)) / out + 0.5f);
-    dst->b = (uint8_t)(255.0f * ((sb * sa) + db * da * (1.0f - sa)) / out + 0.5f);
-    dst->a = (uint8_t)(255.0f * out + 0.5f);
+     * division — see canvas.c's TODO for a future premultiplied pipeline.
+     * Results are clamped to [0,255]: without the clamp, rounding could
+     * overflow uint8_t (e.g. 255.49 + 0.5 -> 256 -> 0) producing stray
+     * black pixels in composites and saved files. */
+    #define BLEND_CH(x) ((uint8_t)CLAMP((int)((x) + 0.5f), 0, 255))
+    dst->r = BLEND_CH(255.0f * ((sr * sa) + dr * da * (1.0f - sa)) / out);
+    dst->g = BLEND_CH(255.0f * ((sg * sa) + dg * da * (1.0f - sa)) / out);
+    dst->b = BLEND_CH(255.0f * ((sb * sa) + db * da * (1.0f - sa)) / out);
+    dst->a = BLEND_CH(255.0f * out);
+    #undef BLEND_CH
 }
 
 void

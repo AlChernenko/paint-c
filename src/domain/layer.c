@@ -1,6 +1,24 @@
 #include "layer.h"
 #include <glib.h>
 
+const char *
+blend_mode_name (BlendMode mode)
+{
+    switch (mode) {
+    case BLEND_NORMAL:      return "Normal";
+    case BLEND_MULTIPLY:    return "Multiply";
+    case BLEND_SCREEN:      return "Screen";
+    case BLEND_OVERLAY:     return "Overlay";
+    case BLEND_DIFFERENCE:  return "Difference";
+    case BLEND_ADDITION:    return "Addition";
+    case BLEND_DARKEN:      return "Darken";
+    case BLEND_LIGHTEN:     return "Lighten";
+    case BLEND_COLOR_DODGE: return "Color Dodge";
+    case BLEND_COLOR_BURN:  return "Color Burn";
+    }
+    return "Normal";
+}
+
 Layer *
 layer_new (const char *name, int width, int height)
 {
