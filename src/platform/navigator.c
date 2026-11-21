@@ -20,7 +20,26 @@ rebuild_thumb (PaintNavigator *self)
     int h = document_height (self->document);
     const uint8_t *src = document_composite (self->document);
     if (!src || w <= 0 || h <= 0) return;
-    GBytes *bytes = g_bytes_new (src, (gsize)w * h * 4);
+
+    /* The document composite is straight (unpremultiplied) BGRA.  GDK only
+     * offers premultiplied BGRA textures, so convert first — otherwise
+     * partially-transparent pixels (common with multiple layers) render
+     * with dark fringes / wrong colors in the thumbnail. */
+    gsize n = (gsize)w * h;
+    uint8_t *buf = g_new (uint8_t, n * 4);
+    for (gsize i = 0; i < n; i++) {
+        const uint8_t *p = src + i * 4;
+        uint8_t a = p[3];
+        if (a == 255)      { buf[i*4+0] = p[0]; buf[i*4+1] = p[1]; buf[i*4+2] = p[2]; }
+        else if (a == 0)   { buf[i*4+0] = buf[i*4+1] = buf[i*4+2] = 0; }
+        else {
+            buf[i*4+0] = (uint8_t)((p[0] * a + 127) / 255);
+            buf[i*4+1] = (uint8_t)((p[1] * a + 127) / 255);
+            buf[i*4+2] = (uint8_t)((p[2] * a + 127) / 255);
+        }
+        buf[i*4+3] = a;
+    }
+    GBytes *bytes = g_bytes_new_take (buf, n * 4);
     GdkTexture *tex = gdk_memory_texture_new (w, h,
         GDK_MEMORY_B8G8R8A8_PREMULTIPLIED, bytes, w * 4);
     g_bytes_unref (bytes);
