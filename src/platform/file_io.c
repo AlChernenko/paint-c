@@ -7,21 +7,24 @@
  * RGBA8 straight alpha, so we swizzle B/R when copying and must NOT
  * premultiply here; gdk_pixbuf_save() handles encoding itself.
  *
- * .pncimg container (version 1):
+ * .pncimg container:
  *   "PNCI" | u32le version | u32le w | u32le h | u32le layer_count
  *   then per layer (bottom-to-top):
- *     u32le name_len | name bytes | f32 opacity (IEEE754 LE) |
- *     u32le blend_mode | u8 visible | raw w*h*4 BGRA pixels
+ *     v2: u32le name_len | name bytes | f32 opacity | u32le blend_mode |
+ *         u8 visible | u32le lw | u32le lh | raw lw*lh*4 BGRA pixels
+ *     v1: same but no per-layer size (layers assumed doc-sized)
  *   All integers little-endian; no compression (MVP — TODO: zlib).
  */
 #include "file_io.h"
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <cairo/cairo.h>
+/* PDF surface support lives in a separate header from the core API. */
+#include <cairo/cairo-pdf.h>
 #include <string.h>
 #include <math.h>
 
 #define PNC_MAGIC   "PNCI"
-#define PNC_VERSION 1u
+#define PNC_VERSION 2u
 
 /* ── Small helpers ─────────────────────────────────────────────────── */
 
@@ -123,12 +126,32 @@ file_io_format_from_path (const char *path, PncFormat *out)
 
 /* ── PDF export (cairo) ────────────────────────────────────────────── */
 
+/* Draw a BGRA8 straight-alpha buffer (cairo ARGB32 on LE hosts) onto the
+ * given context over a white page background. */
+static void
+pdf_paint_buffer (cairo_t *cr, const uint8_t *pixels, int w, int h,
+                  double alpha)
+{
+    cairo_set_source_rgb (cr, 1, 1, 1);
+    cairo_paint (cr);
+    cairo_surface_t *isurf = cairo_image_surface_create_for_data (
+        (unsigned char *)pixels, CAIRO_FORMAT_ARGB32, w, h, w * 4);
+    cairo_set_source_surface (cr, isurf, 0, 0);
+    cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_NEAREST);
+    cairo_paint_with_alpha (cr, alpha);
+    cairo_surface_destroy (isurf);
+}
+
 static gboolean
 save_pdf (Document *doc, const char *path, GError **error)
 {
     int w, h;
     if (!capture_composite (doc, &w, &h, error)) return FALSE;
 
+    /* NOTE: multi-page PDFs need cairo_surface_append_page(), which does
+     * not exist in the linked cairo release (added in cairo 1.17.6).
+     * Until then we export a single flattened page — always correct,
+     * unlike writing several images into one page surface. */
     cairo_surface_t *surf = cairo_pdf_surface_create (path, w, h);
     if (cairo_surface_status (surf) != CAIRO_STATUS_SUCCESS) {
         g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_IO,
@@ -138,36 +161,7 @@ save_pdf (Document *doc, const char *path, GError **error)
         return FALSE;
     }
     cairo_t *cr = cairo_create (surf);
-
-    /* Checkerboard-free white page background so transparent areas print. */
-    cairo_set_source_rgb (cr, 1, 1, 1);
-    cairo_paint (cr);
-
-    /* One page per visible layer (bottom to top), then the flattened
-     * composite as the final page. */
-    int n = document_layer_count (doc);
-    for (int i = 0; i < n; i++) {
-        Layer *l = document_layer_at (doc, i);
-        if (!l || !l->visible || !l->buffer) continue;
-        cairo_append_page (cr);
-        cairo_set_source_rgb (cr, 1, 1, 1);
-        cairo_paint (cr);
-        cairo_surface_t *lsurf = cairo_image_surface_create_for_data (
-            (guchar *)l->buffer->pixels, CAIRO_FORMAT_ARGB32, w, h, w * 4);
-        cairo_set_source_surface (cr, lsurf, 0, 0);
-        cairo_paint_with_alpha (cr, l->opacity);
-        cairo_surface_destroy (lsurf);
-    }
-
-    /* Final flattened page. */
-    cairo_append_page (cr);
-    cairo_set_source_rgb (cr, 1, 1, 1);
-    cairo_paint (cr);
-    cairo_surface_t *csurf = cairo_image_surface_create_for_data (
-        (guchar *)document_composite (doc), CAIRO_FORMAT_ARGB32, w, h, w * 4);
-    cairo_set_source_surface (cr, csurf, 0, 0);
-    cairo_paint (cr);
-    cairo_surface_destroy (csurf);
+    pdf_paint_buffer (cr, document_composite (doc), w, h, 1.0);
 
     cairo_destroy (cr);
     cairo_surface_flush (surf);
@@ -209,14 +203,25 @@ file_io_save (Document *doc, const char *path, PncFormat format, GError **error)
             Layer *l = document_layer_at (doc, i);
             if (!l) continue;
             const char *name = l->name ? l->name : "Layer";
-            gsize name_len = strnlen (name, 255);
+            /* strnlen() needs POSIX 2008 which -std=c11 hides; compute
+             * manually to stay portable. */
+            gsize name_len = 0;
+            while (name[name_len] != '\0' && name_len < 255) name_len++;
             put_u32 (a, (guint32)name_len);
             g_byte_array_append (a, (const guint8 *)name, (guint)name_len);
             put_f32 (a, l->opacity);
             put_u32 (a, (guint32)l->blend_mode);
             g_byte_array_append (a, (const guint8[]){ l->visible ? 1 : 0 }, 1);
-            g_byte_array_append (a, (const guint8 *)l->buffer->pixels,
-                                 (gsize)w * h * sizeof (Pixel));
+            /* Use the layer's own buffer dimensions: after document_resize()
+             * layers may differ from the document size; writing doc-sized
+             * data from a smaller buffer would read out of bounds. */
+            int lw = l->buffer ? l->buffer->width  : 0;
+            int lh = l->buffer ? l->buffer->height : 0;
+            put_u32 (a, (guint32)lw);
+            put_u32 (a, (guint32)lh);
+            if (lw > 0 && lh > 0)
+                g_byte_array_append (a, (const guint8 *)l->buffer->pixels,
+                                     (gsize)lw * lh * sizeof (Pixel));
         }
 
         gboolean ok = g_file_set_contents (path, (const char *)a->data,
@@ -273,7 +278,7 @@ open_pncimg (const char *path, GError **error)
     }
     r.pos += 4;
     guint32 ver = rd_u32 (&r);
-    if (ver != PNC_VERSION) {
+    if (ver != 1u && ver != PNC_VERSION) {
         g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
                      "Unsupported .pncimg version %u", ver);
         g_free (contents);
@@ -288,7 +293,6 @@ open_pncimg (const char *path, GError **error)
     }
 
     Document *doc = document_new ((int)w, (int)h);
-    gsize pix_bytes = (gsize)w * h * sizeof (Pixel);
 
     for (guint32 i = 0; i < n; i++) {
         guint32 name_len = rd_u32 (&r);
@@ -298,13 +302,24 @@ open_pncimg (const char *path, GError **error)
         float opacity = rd_f32 (&r);
         guint32 blend = rd_u32 (&r);
         guint8 visible = rd_u8 (&r);
-        if (!r.ok || r.pos + pix_bytes > r.n) {
+
+        /* v2 stores per-layer dimensions; v1 assumed doc-sized layers. */
+        guint32 lw = w, lh = h;
+        if (ver >= 2u) {
+            lw = rd_u32 (&r);
+            lh = rd_u32 (&r);
+        }
+        gsize pix_bytes = (gsize)lw * lh * sizeof (Pixel);
+        if (!r.ok || lw == 0 || lh > 65535 || lw > 65535 ||
+            pix_bytes > r.n - r.pos) {
             g_free (name);
             break;
         }
         Layer *l = document_add_layer (doc, name);
         g_free (name);
-        memcpy (l->buffer->pixels, r.p + r.pos, pix_bytes);
+        memcpy (l->buffer->pixels, r.p + r.pos,
+                MIN (pix_bytes, (gsize)l->buffer->width *
+                                l->buffer->height * sizeof (Pixel)));
         r.pos += pix_bytes;
         l->opacity = CLAMP (opacity, 0.0f, 1.0f);
         l->blend_mode = (blend < BLEND_MODE_COUNT) ? (BlendMode)blend : BLEND_NORMAL;
@@ -344,7 +359,8 @@ open_raster (const char *path, GError **error)
         for (int x = 0; x < w; x++) {
             const guchar *s = src + (gsize)y * stride + (gsize)x * (has_alpha ? 4 : 3);
             Pixel *p = &l->buffer->pixels[(gsize)y * w + x];
-            p->r = s[0]; p->g = s[1]; p->b = s[2];
+            /* GdkPixbuf is RGBA8; our Pixel is BGRA8 — swizzle R/B. */
+            p->b = s[0]; p->g = s[1]; p->r = s[2];
             p->a = has_alpha ? s[3] : 255;
         }
     }
@@ -369,7 +385,7 @@ file_io_open (const char *path, GError **error)
     g_free (lower);
 
     if (is_pdf) {
-        g_set_error_literal (error, G_FILE_ERROR, G_FILE_ERROR_NOT_SUPPORTED,
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                              "Opening PDF files is not supported "
                              "(paint-c can only export PDF)");
         return NULL;
